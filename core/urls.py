@@ -11,6 +11,22 @@ urlpatterns = [
     # RBAC
     path("api/v1/rbac/", include("apps.rbac.urls")),
 
+    # Orders
+    path("api/v1/orders/", include("apps.orders.urls")),
+
+    # Payments
+    path("api/v1/payments/", include("apps.payments.urls")),
+
+    # Kitchen Display System
+    path("api/v1/kitchen/", include("apps.kitchen.urls")),
+
+    # Tables (outlet-scoped list/create + global retrieve/update/delete/rotate-qr)
+    path("api/v1/outlets/<uuid:outlet_id>/tables/", include("apps.tables.outlet_urls")),
+    path("api/v1/tables/", include("apps.tables.urls")),
+
+    # Public endpoints (no auth required)
+    path("api/v1/public/", include("apps.tables.public_urls")),
+
     # API Schema & Docs
     path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/v1/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

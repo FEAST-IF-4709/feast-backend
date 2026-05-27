@@ -117,6 +117,23 @@ class Order(models.Model):
             if self.cashier_employee_id:
                 raise ValidationError({"cashier_employee": "MOBILE_APP_DELIVERY orders must not have a cashier."})
 
+    def apply_fulfillment_transition(self, to_status, changed_by=None, notes=None):
+        allowed = VALID_TRANSITIONS.get(self.fulfillment_status, [])
+        if to_status not in allowed:
+            raise ValidationError(
+                {"to_status": f"Transisi {self.fulfillment_status} → {to_status} tidak valid."}
+            )
+        from_status = self.fulfillment_status
+        self.fulfillment_status = to_status
+        self.save(update_fields=["fulfillment_status"])
+        OrderStatusHistory.objects.create(
+            order=self,
+            from_status=from_status,
+            to_status=to_status,
+            changed_by=changed_by,
+            notes=notes,
+        )
+
     def __str__(self):
         return f"{self.order_number} — {self.outlet.name}"
 
