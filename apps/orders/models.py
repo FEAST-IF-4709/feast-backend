@@ -1,15 +1,21 @@
 import uuid
-import random
-import string
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
 
-def _generate_order_number():
+def _generate_order_number(outlet_id):
+    from django.core.cache import cache
     date_str = timezone.now().strftime("%Y%m%d")
-    suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
-    return f"FT-{date_str}-{suffix}"
+    key = f"order:seq:{outlet_id}:{date_str}"
+    cache.add(key, 0, timeout=90000)  # SET NX, TTL 25 jam — atomic di Redis
+    try:
+        seq = cache.incr(key)
+    except ValueError:
+        cache.set(key, 1, timeout=90000)
+        seq = 1
+    return f"FT-{date_str}-{seq:06d}"
 
 
 class Order(models.Model):
@@ -91,10 +97,16 @@ class Order(models.Model):
             models.Index(fields=["customer", "-placed_at"]),
             models.Index(fields=["table", "fulfillment_status"]),
         ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(grand_total__gte=0),
+                name="order_grand_total_non_negative",
+            )
+        ]
 
     def save(self, *args, **kwargs):
         if not self.order_number:
-            self.order_number = _generate_order_number()
+            self.order_number = _generate_order_number(self.outlet_id)
         super().save(*args, **kwargs)
 
     def clean(self):

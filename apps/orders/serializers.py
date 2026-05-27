@@ -194,8 +194,9 @@ def compute_order_totals(items_data, product_map):
                 discount_per_unit = base_unit_price * active_promotion.discount_value / 100
             else:
                 discount_per_unit = active_promotion.discount_value
+            discount_per_unit = min(discount_per_unit, base_unit_price)
 
-        unit_price = max(base_unit_price - discount_per_unit, 0)
+        unit_price = base_unit_price - discount_per_unit
         quantity = item_data["quantity"]
         line_total = unit_price * quantity
 
@@ -222,5 +223,5 @@ def compute_order_totals(items_data, product_map):
             "item_notes": item_data.get("item_notes", ""),
         })
 
-    grand_total = subtotal - discount_total
+    grand_total = sum(item["line_total"] for item in order_items_payload)
     return order_items_payload, subtotal, discount_total, grand_total

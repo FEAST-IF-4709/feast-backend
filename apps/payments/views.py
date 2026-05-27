@@ -181,9 +181,21 @@ class MidtransWebhookView(APIView):
                     .get(order_number=order_id)
                 )
 
+                # REFUNDED adalah terminal absolut — tidak boleh ditimpa apapun
+                if order.payment_status == Order.PaymentStatus.REFUNDED:
+                    MidtransWebhookLog.objects.create(
+                        midtrans_order_id=order_id,
+                        transaction_status=transaction_status,
+                        signature_valid=True,
+                        payload=payload,
+                        processing_result=MidtransWebhookLog.ProcessingResult.IGNORED_OUT_OF_ORDER,
+                    )
+                    return StandardResponse(message="Out-of-order event ignored.", request=request)
+
+                # SETTLED hanya boleh diikuti "refund"
                 if (
                     order.payment_status == Order.PaymentStatus.SETTLED
-                    and transaction_status not in ("refund",)
+                    and transaction_status != "refund"
                 ):
                     MidtransWebhookLog.objects.create(
                         midtrans_order_id=order_id,
@@ -194,38 +206,51 @@ class MidtransWebhookView(APIView):
                     )
                     return StandardResponse(message="Out-of-order event ignored.", request=request)
 
-                status_map = {
-                    "settlement": Order.PaymentStatus.SETTLED,
-                    "expire": Order.PaymentStatus.EXPIRED,
-                    "deny": Order.PaymentStatus.DENIED,
-                    "cancel": Order.PaymentStatus.FAILED,
-                    "refund": Order.PaymentStatus.REFUNDED,
-                }
-                new_payment_status = status_map.get(transaction_status)
-                if new_payment_status:
-                    order.payment_status = new_payment_status
-                    order.save(update_fields=["payment_status"])
+                _GATEWAY_REJECTIONS = {"deny", "cancel"}
 
-                PaymentTransaction.objects.filter(order=order).update(
-                    transaction_status=transaction_status,
-                    last_webhook_payload=payload,
-                )
-
-                MidtransWebhookLog.objects.create(
-                    midtrans_order_id=order_id,
-                    transaction_status=transaction_status,
-                    signature_valid=True,
-                    payload=payload,
-                    processing_result=MidtransWebhookLog.ProcessingResult.APPLIED,
-                )
-
-                if transaction_status == "settlement":
-                    order_data = OrderSerializer(order).data
-                    _outlet_id = str(order.outlet_id)
-                    _order_id = str(order.id)
-                    transaction.on_commit(
-                        lambda: _broadcast_settled(_outlet_id, _order_id, order_data)
+                if transaction_status in _GATEWAY_REJECTIONS:
+                    # Catat penolakan gateway — JANGAN ubah order.payment_status agar customer bisa retry
+                    PaymentTransaction.objects.filter(order=order).update(
+                        transaction_status=transaction_status,
+                        last_webhook_payload=payload,
                     )
+                    MidtransWebhookLog.objects.create(
+                        midtrans_order_id=order_id,
+                        transaction_status=transaction_status,
+                        signature_valid=True,
+                        payload=payload,
+                        processing_result=MidtransWebhookLog.ProcessingResult.APPLIED,
+                    )
+                else:
+                    status_map = {
+                        "settlement": Order.PaymentStatus.SETTLED,
+                        "expire": Order.PaymentStatus.EXPIRED,
+                        "refund": Order.PaymentStatus.REFUNDED,
+                    }
+                    new_payment_status = status_map.get(transaction_status)
+                    if new_payment_status:
+                        order.payment_status = new_payment_status
+                        order.save(update_fields=["payment_status"])
+
+                    PaymentTransaction.objects.filter(order=order).update(
+                        transaction_status=transaction_status,
+                        last_webhook_payload=payload,
+                    )
+                    MidtransWebhookLog.objects.create(
+                        midtrans_order_id=order_id,
+                        transaction_status=transaction_status,
+                        signature_valid=True,
+                        payload=payload,
+                        processing_result=MidtransWebhookLog.ProcessingResult.APPLIED,
+                    )
+
+                    if transaction_status == "settlement":
+                        order_data = OrderSerializer(order).data
+                        _outlet_id = str(order.outlet_id)
+                        _order_id = str(order.id)
+                        transaction.on_commit(
+                            lambda: _broadcast_settled(_outlet_id, _order_id, order_data)
+                        )
 
         except Order.DoesNotExist:
             pass
