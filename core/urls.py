@@ -27,6 +27,15 @@ urlpatterns = [
     # Public endpoints (no auth required)
     path("api/v1/public/", include("apps.tables.public_urls")),
 
+    # Geolocation
+    path("api/v1/", include("apps.geolocation.urls")),
+
+    # Recommendations
+    path("api/v1/recommendations/", include("apps.recommendations.urls")),
+
+    # Analytics Dashboard
+    path("api/v1/analytics/", include("apps.analytics.urls")),
+
     # API Schema & Docs
     path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/v1/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

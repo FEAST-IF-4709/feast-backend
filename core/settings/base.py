@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "apps.kitchen",
     "apps.geolocation",
     "apps.recommendations",
+    "apps.analytics",
     "apps.realtime",
 ]
 
@@ -144,6 +145,14 @@ SPECTACULAR_SETTINGS = {
 }
 
 CORS_ALLOWED_ORIGINS = env("CORS_ALLOWED_ORIGINS")
+
+# --- Cache (Redis) ---
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": env("REDIS_URL", default="redis://localhost:6379"),
+    }
+}
 
 # --- Django Channels ---
 CHANNEL_LAYERS = {

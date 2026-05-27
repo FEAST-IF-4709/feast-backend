@@ -1,3 +1,129 @@
-from django.shortcuts import render
+import math
 
-# Create your views here.
+from django.db.models.expressions import RawSQL
+from rest_framework.permissions import AllowAny
+from rest_framework.views import APIView
+
+from apps.tenants.models import Outlet
+from core.responses.standard import StandardResponse
+
+_EARTH_RADIUS_KM = 6371.0088
+
+_HAVERSINE_SQL = """
+    6371.0088 * acos(LEAST(1.0,
+        cos(radians(%s)) * cos(radians(latitude)) *
+        cos(radians(longitude) - radians(%s)) +
+        sin(radians(%s)) * sin(radians(latitude))
+    ))
+"""
+
+
+def _parse_float(value, name):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None, f"'{name}' must be a valid number."
+
+
+class NearbyOutletsView(APIView):
+    """GET /api/v1/outlets/nearby/"""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        errors = {}
+
+        raw_lat = request.query_params.get("lat")
+        raw_lng = request.query_params.get("lng")
+
+        if raw_lat is None:
+            errors["lat"] = "Required."
+        if raw_lng is None:
+            errors["lng"] = "Required."
+
+        if errors:
+            return StandardResponse(
+                success=False, code="VALIDATION_ERROR",
+                message="Missing required parameters.", errors=errors,
+                status=400, request=request,
+            )
+
+        try:
+            lat = float(raw_lat)
+        except (TypeError, ValueError):
+            errors["lat"] = "'lat' must be a valid number."
+
+        try:
+            lng = float(raw_lng)
+        except (TypeError, ValueError):
+            errors["lng"] = "'lng' must be a valid number."
+
+        if errors:
+            return StandardResponse(
+                success=False, code="VALIDATION_ERROR",
+                message="Invalid parameters.", errors=errors,
+                status=400, request=request,
+            )
+
+        if not (-90 <= lat <= 90):
+            errors["lat"] = "Must be between -90 and 90."
+        if not (-180 <= lng <= 180):
+            errors["lng"] = "Must be between -180 and 180."
+
+        try:
+            radius_km = float(request.query_params.get("radius_km", 10))
+        except (TypeError, ValueError):
+            errors["radius_km"] = "Must be a valid number."
+            radius_km = 10
+
+        if not (0 < radius_km <= 100):
+            errors["radius_km"] = "Must be between 0 (exclusive) and 100."
+
+        if errors:
+            return StandardResponse(
+                success=False, code="VALIDATION_ERROR",
+                message="Invalid parameters.", errors=errors,
+                status=400, request=request,
+            )
+
+        try:
+            limit = min(int(request.query_params.get("limit", 20)), 50)
+        except (TypeError, ValueError):
+            limit = 20
+
+        # Bounding-box pre-filter to reduce rows before Haversine evaluation
+        delta_lat = radius_km / 111.0
+        cos_lat = math.cos(math.radians(lat))
+        delta_lng = radius_km / (111.0 * cos_lat) if cos_lat != 0 else 180.0
+
+        qs = Outlet.objects.filter(
+            is_active=True,
+            latitude__range=(lat - delta_lat, lat + delta_lat),
+            longitude__range=(lng - delta_lng, lng + delta_lng),
+        )
+
+        brand_id = request.query_params.get("brand_id")
+        if brand_id:
+            qs = qs.filter(brand_id=brand_id)
+
+        qs = (
+            qs.annotate(distance=RawSQL(_HAVERSINE_SQL, (lat, lng, lat)))
+            .filter(distance__lte=radius_km)
+            .select_related("brand")
+            .order_by("distance")[:limit]
+        )
+
+        data = [
+            {
+                "id": str(outlet.id),
+                "name": outlet.name,
+                "brand_name": outlet.brand.name,
+                "address": outlet.address,
+                "latitude": str(outlet.latitude),
+                "longitude": str(outlet.longitude),
+                "distance_km": round(float(outlet.distance), 2),
+            }
+            for outlet in qs
+        ]
+
+        return StandardResponse(data=data, request=request)
