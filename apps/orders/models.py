@@ -1,83 +1,192 @@
-from django.db import models
 import uuid
-# Create your models here.
+import random
+import string
+from django.db import models
+from django.utils import timezone
+from django.core.exceptions import ValidationError
+
+
+def _generate_order_number():
+    date_str = timezone.now().strftime("%Y%m%d")
+    suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    return f"FT-{date_str}-{suffix}"
+
 
 class Order(models.Model):
-    # Pilihan Status Pesanan
-    ORDER_STATUS_CHOICES = [
-        ('PENDING', 'Pending'),
-        ('PREPARING', 'Preparing'),
-        ('COMPLETED', 'Completed'),
-        ('CANCELED', 'Canceled'),
-    ]
+    class OrderSource(models.TextChoices):
+        QR_TABLE = "QR_TABLE", "QR Table"
+        CASHIER_POS = "CASHIER_POS", "Cashier POS"
+        MOBILE_APP_DELIVERY = "MOBILE_APP_DELIVERY", "Mobile App Delivery"
 
-    # Pilihan Tipe Pesanan
-    ORDER_TYPE_CHOICES = [
-        ('DINE_IN', 'Dine In'),
-        ('TAKEAWAY', 'Takeaway'),
-        ('DELIVERY', 'Delivery'),
-    ]
+    class PaymentMethod(models.TextChoices):
+        CASH = "CASH", "Cash"
+        EDC = "EDC", "EDC"
+        QRIS_MIDTRANS = "QRIS_MIDTRANS", "QRIS Midtrans"
+        BANK_TRANSFER_MIDTRANS = "BANK_TRANSFER_MIDTRANS", "Bank Transfer Midtrans"
 
-    # Pilihan Pembayaran
-    PAYMENT_STATUS_CHOICES = [
-        ('UNPAID', 'Unpaid'),
-        ('PAID', 'Paid'),
-        ('REFUNDED', 'Refunded'),
-    ]
+    class PaymentStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        SETTLED = "SETTLED", "Settled"
+        EXPIRED = "EXPIRED", "Expired"
+        DENIED = "DENIED", "Denied"
+        FAILED = "FAILED", "Failed"
+        REFUNDED = "REFUNDED", "Refunded"
 
-    PAYMENT_METHOD_CHOICES = [
-        ('CASH', 'Cash'),
-        ('CARD', 'Debit/Credit Card'),
-        ('QRIS', 'QRIS / E-Wallet'),
-    ]
+    class FulfillmentStatus(models.TextChoices):
+        RECEIVED = "RECEIVED", "Received"
+        IN_PROGRESS = "IN_PROGRESS", "In Progress"
+        READY = "READY", "Ready"
+        SERVED = "SERVED", "Served"
+        COMPLETED = "COMPLETED", "Completed"
+        CANCELLED = "CANCELLED", "Cancelled"
 
-    # Primary Key menggunakan UUID agar aman & susah ditebak (standar struk modern)
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    
-    # Relasi ke Tenant dan User
-    outlet = models.ForeignKey('tenants.Outlet', on_delete=models.RESTRICT, related_name='orders')
-    cashier = models.ForeignKey('users.Employee', on_delete=models.SET_NULL, null=True, blank=True, related_name='handled_orders')
-    
-    # Info Pelanggan
-    customer_name = models.CharField(max_length=100, blank=True, null=True)
-    order_type = models.CharField(max_length=20, choices=ORDER_TYPE_CHOICES, default='DINE_IN')
-    
-    # Finansial (Pakai DecimalField untuk uang, JANGAN pakai FloatField agar tidak ada error pembulatan)
-    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
-    tax = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
-    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
-    
-    # Status
-    status = models.CharField(max_length=20, choices=ORDER_STATUS_CHOICES, default='PENDING')
-    payment_status = models.CharField(max_length=20, choices=PAYMENT_STATUS_CHOICES, default='UNPAID')
-    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, blank=True, null=True)
-    
-    # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    order_number = models.CharField(max_length=20, unique=True, blank=True)
+    brand = models.ForeignKey("tenants.Brand", on_delete=models.PROTECT, related_name="orders")
+    outlet = models.ForeignKey("tenants.Outlet", on_delete=models.PROTECT, related_name="orders")
+    customer = models.ForeignKey(
+        "customers.Customer",
+        on_delete=models.PROTECT,
+        related_name="orders",
+        null=True,
+        blank=True,
+    )
+    table = models.ForeignKey(
+        "tables.Table",
+        on_delete=models.PROTECT,
+        related_name="orders",
+        null=True,
+        blank=True,
+    )
+    cashier_employee = models.ForeignKey(
+        "staff.Employee",
+        on_delete=models.PROTECT,
+        related_name="cashier_orders",
+        null=True,
+        blank=True,
+    )
+    order_source = models.CharField(max_length=25, choices=OrderSource.choices)
+    walk_in_name = models.CharField(max_length=100, null=True, blank=True)
+    payment_method = models.CharField(max_length=30, choices=PaymentMethod.choices, blank=True)
+    payment_status = models.CharField(
+        max_length=20,
+        choices=PaymentStatus.choices,
+        default=PaymentStatus.PENDING,
+    )
+    fulfillment_status = models.CharField(
+        max_length=20,
+        choices=FulfillmentStatus.choices,
+        default=FulfillmentStatus.RECEIVED,
+    )
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    discount_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    grand_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    placed_at = models.DateTimeField(db_index=True, default=timezone.now)
+    notes = models.TextField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["brand", "outlet", "fulfillment_status", "-placed_at"]),
+            models.Index(fields=["brand", "payment_status", "-placed_at"]),
+            models.Index(fields=["customer", "-placed_at"]),
+            models.Index(fields=["table", "fulfillment_status"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.order_number:
+            self.order_number = _generate_order_number()
+        super().save(*args, **kwargs)
+
+    def clean(self):
+        src = self.order_source
+        if src == self.OrderSource.QR_TABLE:
+            if not self.customer_id:
+                raise ValidationError({"customer": "QR_TABLE orders require a logged-in customer."})
+            if not self.table_id:
+                raise ValidationError({"table": "QR_TABLE orders require a table."})
+            if self.cashier_employee_id:
+                raise ValidationError({"cashier_employee": "QR_TABLE orders must not have a cashier."})
+        elif src == self.OrderSource.CASHIER_POS:
+            if not self.cashier_employee_id:
+                raise ValidationError({"cashier_employee": "CASHIER_POS orders require a cashier."})
+        elif src == self.OrderSource.MOBILE_APP_DELIVERY:
+            if not self.customer_id:
+                raise ValidationError({"customer": "MOBILE_APP_DELIVERY orders require a customer."})
+            if self.table_id:
+                raise ValidationError({"table": "MOBILE_APP_DELIVERY orders must not have a table."})
+            if self.cashier_employee_id:
+                raise ValidationError({"cashier_employee": "MOBILE_APP_DELIVERY orders must not have a cashier."})
 
     def __str__(self):
-        return f"Order {self.id} - {self.outlet.name} ({self.status})"
+        return f"{self.order_number} — {self.outlet.name}"
+
+
+VALID_TRANSITIONS = {
+    Order.FulfillmentStatus.RECEIVED: [
+        Order.FulfillmentStatus.IN_PROGRESS,
+        Order.FulfillmentStatus.CANCELLED,
+    ],
+    Order.FulfillmentStatus.IN_PROGRESS: [
+        Order.FulfillmentStatus.READY,
+        Order.FulfillmentStatus.CANCELLED,
+    ],
+    Order.FulfillmentStatus.READY: [Order.FulfillmentStatus.SERVED],
+    Order.FulfillmentStatus.SERVED: [Order.FulfillmentStatus.COMPLETED],
+    Order.FulfillmentStatus.COMPLETED: [],
+    Order.FulfillmentStatus.CANCELLED: [],
+}
 
 
 class OrderItem(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
-    
-    # Relasi ke Katalog Produk (Menggunakan Lazy Reference bentuk string)
-    product = models.ForeignKey('catalog.Product', on_delete=models.RESTRICT, related_name='order_history')
-    
-    quantity = models.PositiveIntegerField(default=1)
-    
-    # Harga saat pesanan dibuat (PENTING! Harga menu bisa berubah di masa depan, harga di struk lama tidak boleh ikut berubah)
-    price_at_time = models.DecimalField(max_digits=10, decimal_places=2)
-    
-    # Catatan khusus (misal: "Gula sedikit", "Jangan pakai bawang")
-    notes = models.TextField(blank=True, null=True)
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
+    outlet_product = models.ForeignKey(
+        "catalog.OutletProduct",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="order_items",
+    )
+    product_snapshot = models.JSONField()
+    quantity = models.PositiveIntegerField()
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    line_total = models.DecimalField(max_digits=12, decimal_places=2)
+    item_notes = models.CharField(max_length=255, null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["order"]),
+            models.Index(fields=["outlet_product", "order"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.line_total = self.unit_price * self.quantity
+        super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.quantity}x {self.product.name} (Order: {self.order.id})"
-    
-    @property
-    def subtotal(self):
-        return self.quantity * self.price_at_time
+        name = self.product_snapshot.get("name", "?") if self.product_snapshot else "?"
+        return f"{self.quantity}x {name} (Order {self.order.order_number})"
+
+
+class OrderStatusHistory(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="status_history")
+    from_status = models.CharField(max_length=20, null=True, blank=True)
+    to_status = models.CharField(max_length=20)
+    changed_by = models.ForeignKey(
+        "staff.Employee",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="status_changes",
+    )
+    changed_at = models.DateTimeField(auto_now_add=True)
+    notes = models.TextField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["order", "changed_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.order.order_number}: {self.from_status} → {self.to_status}"
