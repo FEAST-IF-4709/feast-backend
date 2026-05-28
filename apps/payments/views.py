@@ -1,9 +1,3 @@
-import hashlib
-import hmac
-from datetime import timedelta
-
-import requests as http_requests
-from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -18,13 +12,7 @@ from .serializers import (
     ManualSettleSerializer,
     ManualSettlementSerializer,
 )
-
-
-def _verify_midtrans_signature(order_id, status_code, gross_amount, signature_key):
-    server_key = getattr(settings, "MIDTRANS_SERVER_KEY", "")
-    raw = f"{order_id}{status_code}{gross_amount}{server_key}"
-    expected = hashlib.sha512(raw.encode()).hexdigest()
-    return hmac.compare_digest(expected, signature_key)
+from .services.midtrans import MidtransClient, MidtransError
 
 
 class InitiateQRISView(APIView):
@@ -47,39 +35,10 @@ class InitiateQRISView(APIView):
                 request=request,
             )
 
-        midtrans_order_id = order.order_number
-        is_production = getattr(settings, "MIDTRANS_IS_PRODUCTION", False)
-        base_url = (
-            "https://api.midtrans.com" if is_production else "https://api.sandbox.midtrans.com"
-        )
-
-        payment_type = (
-            "qris"
-            if order.payment_method == Order.PaymentMethod.QRIS_MIDTRANS
-            else "bank_transfer"
-        )
-
-        payload = {
-            "payment_type": payment_type,
-            "transaction_details": {
-                "order_id": midtrans_order_id,
-                "gross_amount": int(order.grand_total),
-            },
-        }
-        if payment_type == "qris":
-            payload["qris"] = {"acquirer": "gopay"}
-
-        server_key = getattr(settings, "MIDTRANS_SERVER_KEY", "")
+        client = MidtransClient()
         try:
-            resp = http_requests.post(
-                f"{base_url}/v2/charge",
-                json=payload,
-                auth=(server_key, ""),
-                timeout=10,
-            )
-            resp.raise_for_status()
-            resp_data = resp.json()
-        except Exception as exc:
+            result = client.charge_qris(order)
+        except MidtransError as exc:
             return StandardResponse(
                 success=False,
                 code="PAYMENT_GATEWAY_ERROR",
@@ -88,23 +47,18 @@ class InitiateQRISView(APIView):
                 request=request,
             )
 
-        qr_string = resp_data.get("qr_string")
-        qr_image_url = resp_data.get("qr_image_url")
-        transaction_id = resp_data.get("transaction_id")
-        expires_at = timezone.now() + timedelta(minutes=15)
-
         pt = PaymentTransaction.objects.create(
             order=order,
-            midtrans_order_id=midtrans_order_id,
-            transaction_id=transaction_id,
-            payment_type=payment_type,
+            midtrans_order_id=order.order_number,
+            transaction_id=result["transaction_id"],
+            payment_type="qris",
             gross_amount=order.grand_total,
-            qr_string=qr_string,
-            qr_image_url=qr_image_url,
-            expires_at=expires_at,
+            qr_string=result["qr_string"],
+            qr_image_url=result["qr_image_url"],
+            expires_at=result["expires_at"],
             transaction_status="pending",
-            raw_request_payload=payload,
-            raw_response_payload=resp_data,
+            raw_request_payload=result["raw_request_payload"],
+            raw_response_payload=result["raw_response_payload"],
         )
 
         return StandardResponse(
@@ -129,6 +83,7 @@ class InitiateQRISView(APIView):
 class MidtransWebhookView(APIView):
     """POST /api/v1/payments/webhook/midtrans/ — public, signature-verified."""
 
+    authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -141,7 +96,7 @@ class MidtransWebhookView(APIView):
         transaction_status = payload.get("transaction_status", "")
         transaction_time = payload.get("transaction_time", "")
 
-        sig_valid = _verify_midtrans_signature(order_id, status_code, gross_amount, signature_key)
+        sig_valid = MidtransClient().verify_signature(order_id, status_code, gross_amount, signature_key)
 
         if not sig_valid:
             MidtransWebhookLog.objects.create(
@@ -181,8 +136,8 @@ class MidtransWebhookView(APIView):
                     .get(order_number=order_id)
                 )
 
-                # REFUNDED adalah terminal absolut — tidak boleh ditimpa apapun
-                if order.payment_status == Order.PaymentStatus.REFUNDED:
+                # REFUNDED dan EXPIRED adalah terminal absolut — tidak boleh ditimpa apapun
+                if order.payment_status in (Order.PaymentStatus.REFUNDED, Order.PaymentStatus.EXPIRED):
                     MidtransWebhookLog.objects.create(
                         midtrans_order_id=order_id,
                         transaction_status=transaction_status,

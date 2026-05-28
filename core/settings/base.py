@@ -134,6 +134,11 @@ SIMPLE_JWT = {
     "USER_ID_CLAIM": "user_id",
 }
 
+# --- Midtrans ---
+MIDTRANS_SERVER_KEY = env("MIDTRANS_SERVER_KEY", default="")
+MIDTRANS_CLIENT_KEY = env("MIDTRANS_CLIENT_KEY", default="")
+MIDTRANS_IS_PRODUCTION = env.bool("MIDTRANS_IS_PRODUCTION", default=False)
+
 # --- drf-spectacular ---
 SPECTACULAR_SETTINGS = {
     "TITLE": "FEAST API",
