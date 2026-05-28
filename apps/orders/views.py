@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from core.responses.standard import StandardResponse
 from .models import Order, OrderItem, OrderStatusHistory
 from .serializers import (
+    OrderDetailSerializer,
     OrderSerializer,
     OrderQRTableCreateSerializer,
     OrderCashierPOSCreateSerializer,
@@ -166,3 +167,61 @@ class OrderCashierPOSCreateView(APIView):
             status=201,
             request=request,
         )
+
+
+class CustomerOrderListView(APIView):
+    """GET /api/v1/me/orders/ — Customer's own order history."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        tenant = getattr(request, "tenant", None)
+        if not tenant or tenant.get("actor_type") != "CUSTOMER":
+            return StandardResponse(
+                success=False, code="PERMISSION_DENIED",
+                message="Only customers can access their order history.",
+                status=403, request=request,
+            )
+
+        qs = (
+            Order.objects.filter(customer=request.user)
+            .select_related("outlet__brand", "table")
+            .prefetch_related("items")
+            .order_by("-placed_at")
+        )
+        return StandardResponse(data=OrderSerializer(qs, many=True).data, request=request)
+
+
+class OrderDetailView(APIView):
+    """GET /api/v1/orders/{pk}/ — Owner customer OR employee at same brand/outlet."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        tenant = getattr(request, "tenant", None)
+        actor_type = (tenant or {}).get("actor_type")
+
+        if actor_type == "CUSTOMER":
+            qs = Order.objects.filter(pk=pk, customer=request.user)
+        elif actor_type == "EMPLOYEE":
+            qs = Order.objects.filter(
+                pk=pk,
+                brand_id=tenant["brand_id"],
+                outlet_id__in=tenant["outlet_ids"],
+            )
+        else:
+            qs = Order.objects.none()
+
+        order = (
+            qs.select_related("outlet__brand", "table", "customer", "cashier_employee")
+              .prefetch_related("items", "status_history")
+              .first()
+        )
+        if not order:
+            return StandardResponse(
+                success=False, code="NOT_FOUND",
+                message="Order tidak ditemukan.",
+                status=404, request=request,
+            )
+
+        return StandardResponse(data=OrderDetailSerializer(order).data, request=request)

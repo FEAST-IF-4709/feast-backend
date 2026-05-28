@@ -44,6 +44,13 @@ class OrderSerializer(serializers.ModelSerializer):
         ]
 
 
+class OrderDetailSerializer(OrderSerializer):
+    status_history = OrderStatusHistorySerializer(many=True, read_only=True)
+
+    class Meta(OrderSerializer.Meta):
+        fields = OrderSerializer.Meta.fields + ["status_history"]
+
+
 class OrderQRTableCreateSerializer(serializers.Serializer):
     table_id = serializers.UUIDField()
     items = OrderItemCreateSerializer(many=True, min_length=1)

@@ -1,21 +1,11 @@
 import uuid
+
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
-
-def _generate_order_number(outlet_id):
-    from django.core.cache import cache
-    date_str = timezone.now().strftime("%Y%m%d")
-    key = f"order:seq:{outlet_id}:{date_str}"
-    cache.add(key, 0, timeout=90000)  # SET NX, TTL 25 jam — atomic di Redis
-    try:
-        seq = cache.incr(key)
-    except ValueError:
-        cache.set(key, 1, timeout=90000)
-        seq = 1
-    return f"FT-{date_str}-{seq:06d}"
+from apps.orders.utils import generate_order_number
 
 
 class Order(models.Model):
@@ -106,7 +96,7 @@ class Order(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.order_number:
-            self.order_number = _generate_order_number(self.outlet_id)
+            self.order_number = generate_order_number()
         super().save(*args, **kwargs)
 
     def clean(self):
@@ -127,14 +117,25 @@ class Order(models.Model):
             if self.table_id:
                 raise ValidationError({"table": "MOBILE_APP_DELIVERY orders must not have a table."})
             if self.cashier_employee_id:
-                raise ValidationError({"cashier_employee": "MOBILE_APP_DELIVERY orders must not have a cashier."})
+                raise ValidationError(
+                    {"cashier_employee": "MOBILE_APP_DELIVERY orders must not have a cashier."}
+                )
 
-    def apply_fulfillment_transition(self, to_status, changed_by=None, notes=None):
-        allowed = VALID_TRANSITIONS.get(self.fulfillment_status, [])
-        if to_status not in allowed:
-            raise ValidationError(
-                {"to_status": f"Transisi {self.fulfillment_status} → {to_status} tidak valid."}
-            )
+    def apply_fulfillment_transition(
+        self,
+        to_status: str,
+        changed_by=None,
+        notes: str | None = None,
+        actor_permissions: frozenset[str] = frozenset(),
+    ) -> None:
+        """Transition fulfillment status, validate path + permission, write history row.
+
+        Delegates transition validation (including permission check) to
+        core.utils.state_machine.validate_transition.
+        """
+        from core.utils.state_machine import validate_transition
+
+        validate_transition(self.fulfillment_status, to_status, actor_permissions)
         from_status = self.fulfillment_status
         self.fulfillment_status = to_status
         self.save(update_fields=["fulfillment_status"])
@@ -148,22 +149,6 @@ class Order(models.Model):
 
     def __str__(self):
         return f"{self.order_number} — {self.outlet.name}"
-
-
-VALID_TRANSITIONS = {
-    Order.FulfillmentStatus.RECEIVED: [
-        Order.FulfillmentStatus.IN_PROGRESS,
-        Order.FulfillmentStatus.CANCELLED,
-    ],
-    Order.FulfillmentStatus.IN_PROGRESS: [
-        Order.FulfillmentStatus.READY,
-        Order.FulfillmentStatus.CANCELLED,
-    ],
-    Order.FulfillmentStatus.READY: [Order.FulfillmentStatus.SERVED],
-    Order.FulfillmentStatus.SERVED: [Order.FulfillmentStatus.COMPLETED],
-    Order.FulfillmentStatus.COMPLETED: [],
-    Order.FulfillmentStatus.CANCELLED: [],
-}
 
 
 class OrderItem(models.Model):
@@ -219,3 +204,17 @@ class OrderStatusHistory(models.Model):
 
     def __str__(self):
         return f"{self.order.order_number}: {self.from_status} → {self.to_status}"
+
+
+class DailyOrderCounter(models.Model):
+    """Global daily sequence table for PG-native atomic order number generation.
+
+    One row per calendar day; last_sequence is incremented atomically via
+    ON CONFLICT DO UPDATE in apps.orders.utils.generate_order_number.
+    """
+
+    date = models.DateField(unique=True)
+    last_sequence = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "orders_dailyordercounter"

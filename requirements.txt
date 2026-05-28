@@ -15,3 +15,6 @@ channels-redis==4.2.0
 daphne==4.1.2
 redis==5.2.1
 requests==2.32.3
+pytest==8.3.5
+pytest-django==4.9.0
+pytest-mock==3.14.0

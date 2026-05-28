@@ -2,6 +2,10 @@ from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 
+def _ws_event(event_name: str, data: dict) -> dict:
+    return {"success": True, "code": "OK", "event": event_name, "data": data}
+
+
 class KitchenConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
         outlet_id = self.scope["url_route"]["kwargs"]["outlet_id"]
@@ -24,13 +28,13 @@ class KitchenConsumer(AsyncJsonWebsocketConsumer):
             await self.channel_layer.group_discard(self.group_name, self.channel_name)
 
     async def order_created(self, event):
-        await self.send_json({"event": "order.created", "data": event["payload"]})
+        await self.send_json(_ws_event("order.created", event["payload"]))
 
     async def order_status_changed(self, event):
-        await self.send_json({"event": "order.status_changed", "data": event["payload"]})
+        await self.send_json(_ws_event("order.status_changed", event["payload"]))
 
     async def order_cancelled(self, event):
-        await self.send_json({"event": "order.cancelled", "data": event["payload"]})
+        await self.send_json(_ws_event("order.cancelled", event["payload"]))
 
 
 class OrderConsumer(AsyncJsonWebsocketConsumer):
@@ -79,7 +83,41 @@ class OrderConsumer(AsyncJsonWebsocketConsumer):
         ).exists()
 
     async def payment_status_changed(self, event):
-        await self.send_json({"event": "payment.status_changed", "data": event["payload"]})
+        await self.send_json(_ws_event("payment.status_changed", event["payload"]))
 
     async def fulfillment_status_changed(self, event):
-        await self.send_json({"event": "fulfillment.status_changed", "data": event["payload"]})
+        await self.send_json(_ws_event("fulfillment.status_changed", event["payload"]))
+
+
+class DashboardConsumer(AsyncJsonWebsocketConsumer):
+    async def connect(self):
+        outlet_id = self.scope["url_route"]["kwargs"]["outlet_id"]
+        tenant = self.scope.get("tenant")
+
+        if not tenant or "kitchen.order.view" not in tenant["permissions"]:
+            await self.close(code=4403)
+            return
+
+        if str(outlet_id) not in [str(o) for o in tenant.get("outlet_ids", [])]:
+            await self.close(code=4403)
+            return
+
+        self.group_name = f"outlet.{outlet_id}.dashboard"
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.accept()
+
+    async def disconnect(self, code):
+        if hasattr(self, "group_name"):
+            await self.channel_layer.group_discard(self.group_name, self.channel_name)
+
+    async def order_created(self, event):
+        await self.send_json(_ws_event("order.created", event["payload"]))
+
+    async def order_status_changed(self, event):
+        await self.send_json(_ws_event("order.status_changed", event["payload"]))
+
+    async def order_cancelled(self, event):
+        await self.send_json(_ws_event("order.cancelled", event["payload"]))
+
+    async def payment_status_changed(self, event):
+        await self.send_json(_ws_event("payment.status_changed", event["payload"]))

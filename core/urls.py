@@ -14,6 +14,12 @@ urlpatterns = [
     # Orders
     path("api/v1/orders/", include("apps.orders.urls")),
 
+    # Customer self-service (me/)
+    path("api/v1/me/", include("apps.orders.me_urls")),
+
+    # Customers (staff-side lookup)
+    path("api/v1/customers/", include("apps.customers.urls")),
+
     # Payments
     path("api/v1/payments/", include("apps.payments.urls")),
 

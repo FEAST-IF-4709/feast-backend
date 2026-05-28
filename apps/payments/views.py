@@ -245,11 +245,10 @@ class MidtransWebhookView(APIView):
                     )
 
                     if transaction_status == "settlement":
-                        order_data = OrderSerializer(order).data
                         _outlet_id = str(order.outlet_id)
                         _order_id = str(order.id)
                         transaction.on_commit(
-                            lambda: _broadcast_settled(_outlet_id, _order_id, order_data)
+                            lambda: _broadcast_settled(_outlet_id, _order_id)
                         )
 
         except Order.DoesNotExist:
@@ -258,9 +257,11 @@ class MidtransWebhookView(APIView):
         return StandardResponse(message="Webhook processed.", request=request)
 
 
-def _broadcast_settled(outlet_id, order_id_str, order_data):
-    from apps.realtime.broadcast import broadcast_to_kitchen, broadcast_to_order
-    broadcast_to_kitchen(outlet_id, "order.created", order_data)
+def _broadcast_settled(outlet_id, order_id_str):
+    from apps.realtime.broadcast import broadcast_to_kitchen, broadcast_to_order, broadcast_to_dashboard
+    thin = {"order_id": order_id_str, "outlet_id": outlet_id}
+    broadcast_to_kitchen(outlet_id, "order.created", thin)
+    broadcast_to_dashboard(outlet_id, "order.created", thin)
     broadcast_to_order(order_id_str, "payment.status_changed", {"payment_status": "SETTLED"})
 
 
@@ -313,9 +314,8 @@ class ManualSettleView(APIView):
 
             _outlet_id = str(order_locked.outlet_id)
             _order_id = str(order_locked.id)
-            order_data = OrderSerializer(order_locked).data
             transaction.on_commit(
-                lambda: _broadcast_settled(_outlet_id, _order_id, order_data)
+                lambda: _broadcast_settled(_outlet_id, _order_id)
             )
 
         return StandardResponse(

@@ -113,12 +113,11 @@ class KitchenOrderStatusUpdateView(APIView):
             order_locked.apply_fulfillment_transition(
                 to_status, changed_by=request.user, notes=notes
             )
-            order_data = KitchenOrderSerializer(order_locked).data
             _outlet_id = str(order_locked.outlet_id)
             _order_id = str(order_locked.id)
             _to_status = to_status
             transaction.on_commit(
-                lambda: _broadcast_status_change(_outlet_id, _order_id, order_data, _to_status)
+                lambda: _broadcast_status_change(_outlet_id, _order_id, _to_status)
             )
 
         return StandardResponse(
@@ -169,11 +168,10 @@ class KitchenOrderCancelView(APIView):
                 changed_by=request.user,
                 notes=notes,
             )
-            order_data = KitchenOrderSerializer(order_locked).data
             _outlet_id = str(order_locked.outlet_id)
             _order_id = str(order_locked.id)
             transaction.on_commit(
-                lambda: _broadcast_cancel(_outlet_id, _order_id, order_data)
+                lambda: _broadcast_cancel(_outlet_id, _order_id)
             )
 
         return StandardResponse(
@@ -183,15 +181,19 @@ class KitchenOrderCancelView(APIView):
         )
 
 
-def _broadcast_status_change(outlet_id, order_id_str, order_data, to_status):
-    from apps.realtime.broadcast import broadcast_to_kitchen, broadcast_to_order
-    broadcast_to_kitchen(outlet_id, "order.status_changed", order_data)
+def _broadcast_status_change(outlet_id, order_id_str, to_status):
+    from apps.realtime.broadcast import broadcast_to_kitchen, broadcast_to_order, broadcast_to_dashboard
+    thin = {"order_id": order_id_str, "fulfillment_status": to_status}
+    broadcast_to_kitchen(outlet_id, "order.status_changed", thin)
+    broadcast_to_dashboard(outlet_id, "order.status_changed", thin)
     broadcast_to_order(order_id_str, "fulfillment.status_changed", {"fulfillment_status": to_status})
 
 
-def _broadcast_cancel(outlet_id, order_id_str, order_data):
-    from apps.realtime.broadcast import broadcast_to_kitchen, broadcast_to_order
-    broadcast_to_kitchen(outlet_id, "order.cancelled", order_data)
+def _broadcast_cancel(outlet_id, order_id_str):
+    from apps.realtime.broadcast import broadcast_to_kitchen, broadcast_to_order, broadcast_to_dashboard
+    thin = {"order_id": order_id_str, "fulfillment_status": Order.FulfillmentStatus.CANCELLED}
+    broadcast_to_kitchen(outlet_id, "order.cancelled", thin)
+    broadcast_to_dashboard(outlet_id, "order.cancelled", thin)
     broadcast_to_order(
         order_id_str,
         "fulfillment.status_changed",
