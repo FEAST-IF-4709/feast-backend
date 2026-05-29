@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import status as http_status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -8,6 +9,7 @@ from django.db import transaction
 from core.viewsets.tenant_scoped import TenantScopedViewSet
 from core.permissions.has_permission import HasPermission
 from core.responses.standard import StandardResponse
+from core.schema import COMMON_ERROR_RESPONSES
 from apps.rbac.models import Permission, Role, RolePermission
 from apps.rbac.serializers import (
     PermissionSerializer,
@@ -20,12 +22,26 @@ from apps.rbac.serializers import (
 class PermissionListView(APIView):
     """GET /api/v1/rbac/permissions/ — returns all permissions (global, no tenant filter)."""
 
+    @extend_schema(
+        tags=["RBAC"],
+        summary="List all permissions",
+        description="Returns the full catalogue of permission codenames available to assign to roles.",
+        responses={200: PermissionSerializer(many=True), **COMMON_ERROR_RESPONSES},
+    )
     def get(self, request):
         perms = Permission.objects.all().order_by("module", "codename")
         data = PermissionSerializer(perms, many=True).data
         return StandardResponse(data=list(data), message="Permissions retrieved.", request=request)
 
 
+@extend_schema_view(
+    list=extend_schema(tags=["RBAC"], summary="List roles", responses={200: RoleSerializer(many=True), **COMMON_ERROR_RESPONSES}),
+    retrieve=extend_schema(tags=["RBAC"], summary="Get role", responses={200: RoleSerializer, **COMMON_ERROR_RESPONSES}),
+    create=extend_schema(tags=["RBAC"], summary="Create role", request=RoleCreateSerializer, responses={201: RoleSerializer, **COMMON_ERROR_RESPONSES}),
+    update=extend_schema(tags=["RBAC"], summary="Update role", request=RoleCreateSerializer, responses={200: RoleSerializer, **COMMON_ERROR_RESPONSES}),
+    partial_update=extend_schema(tags=["RBAC"], summary="Partial update role", responses={200: RoleSerializer, **COMMON_ERROR_RESPONSES}),
+    destroy=extend_schema(tags=["RBAC"], summary="Delete role", description="System roles cannot be deleted.", responses={204: None, **COMMON_ERROR_RESPONSES}),
+)
 class RoleViewSet(TenantScopedViewSet):
     queryset = Role.objects.all()
     serializer_class = RoleSerializer
@@ -69,6 +85,13 @@ class RoleViewSet(TenantScopedViewSet):
         role.delete()
         return StandardResponse(message="Role deleted.", request=request, status=http_status.HTTP_204_NO_CONTENT)
 
+    @extend_schema(
+        tags=["RBAC"],
+        summary="Set role permissions",
+        description="Replace all permissions on a role with the provided list. Requires `rbac.role.update` permission.",
+        request=RolePermissionUpdateSerializer,
+        responses={200: RoleSerializer, **COMMON_ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["put"], url_path="permissions")
     def set_permissions(self, request, pk=None):
         role = self.get_object()

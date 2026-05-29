@@ -3,12 +3,15 @@ from datetime import timedelta
 from django.core.cache import cache
 from django.db.models import Sum
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema, inline_serializer, OpenApiParameter
+from rest_framework import serializers as drf_serializers
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
 from apps.catalog.models import BrandProduct
 from apps.orders.models import OrderItem
 from core.responses.standard import StandardResponse
+from core.schema import COMMON_ERROR_RESPONSES
 
 _CACHE_TTL = 300  # 5 minutes
 
@@ -18,6 +21,24 @@ class PopularProductsView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=["Recommendations"],
+        summary="Popular products",
+        description="Returns the top-selling products for a brand within the given time window. Results are cached for 5 minutes.",
+        parameters=[
+            OpenApiParameter("limit", int, description="Max results to return. Default: 10, max: 50"),
+            OpenApiParameter("window_days", int, description="Lookback window in days. Default: 30, max: 365"),
+            OpenApiParameter("outlet_id", str, description="Filter by outlet UUID. Default: all outlets"),
+        ],
+        responses={
+            200: inline_serializer("PopularProduct", fields={
+                "brand_product_id": drf_serializers.UUIDField(),
+                "name": drf_serializers.CharField(),
+                "total_qty_sold": drf_serializers.IntegerField(),
+            }, many=True),
+            **COMMON_ERROR_RESPONSES,
+        },
+    )
     def get(self, request, brand_id):
         try:
             limit = min(int(request.query_params.get("limit", 10)), 50)
@@ -72,6 +93,16 @@ class OnPromotionView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=["Recommendations"],
+        summary="Products on promotion",
+        description="Returns brand products with an active promotion at the current time. Results are cached for 5 minutes.",
+        parameters=[
+            OpenApiParameter("limit", int, description="Max results. Default: 10, max: 50"),
+            OpenApiParameter("outlet_id", str, description="Filter by outlet UUID. Default: all outlets"),
+        ],
+        responses={200: None, **COMMON_ERROR_RESPONSES},
+    )
     def get(self, request, brand_id):
         try:
             limit = min(int(request.query_params.get("limit", 10)), 50)

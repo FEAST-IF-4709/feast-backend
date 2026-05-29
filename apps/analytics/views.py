@@ -3,11 +3,14 @@ from datetime import timedelta
 from django.db.models import Count, Sum
 from django.db.models.functions import TruncDate
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema, inline_serializer, OpenApiParameter
+from rest_framework import serializers as drf_serializers
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from apps.orders.models import Order
 from core.responses.standard import StandardResponse
+from core.schema import COMMON_ERROR_RESPONSES
 
 
 def _require_dashboard_permission(request):
@@ -22,6 +25,26 @@ class DashboardSummaryView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Analytics"],
+        summary="Dashboard revenue summary",
+        description="Aggregated revenue and order counts for the brand. Requires `dashboard.view` permission.",
+        parameters=[
+            OpenApiParameter("date_from", str, description="Start date filter (YYYY-MM-DD)"),
+            OpenApiParameter("date_to", str, description="End date filter (YYYY-MM-DD)"),
+        ],
+        responses={
+            200: inline_serializer("DashboardSummary", fields={
+                "total_revenue": drf_serializers.CharField(),
+                "total_orders": drf_serializers.IntegerField(),
+                "settled_orders": drf_serializers.IntegerField(),
+                "pending_orders": drf_serializers.IntegerField(),
+                "date_from": drf_serializers.CharField(allow_null=True),
+                "date_to": drf_serializers.CharField(allow_null=True),
+            }),
+            **COMMON_ERROR_RESPONSES,
+        },
+    )
     def get(self, request):
         if not _require_dashboard_permission(request):
             return StandardResponse(
@@ -70,6 +93,22 @@ class DailyRevenueChartView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Analytics"],
+        summary="Daily revenue chart data",
+        description="Returns daily revenue and order count for the last N days (max 90). Requires `dashboard.view` permission.",
+        parameters=[
+            OpenApiParameter("days", int, description="Number of days to look back. Default: 30, max: 90"),
+        ],
+        responses={
+            200: inline_serializer("DailyRevenuePoint", fields={
+                "date": drf_serializers.DateField(),
+                "revenue": drf_serializers.CharField(),
+                "order_count": drf_serializers.IntegerField(),
+            }, many=True),
+            **COMMON_ERROR_RESPONSES,
+        },
+    )
     def get(self, request):
         if not _require_dashboard_permission(request):
             return StandardResponse(

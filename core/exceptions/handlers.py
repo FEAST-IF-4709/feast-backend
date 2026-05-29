@@ -30,7 +30,9 @@ def custom_exception_handler(exc, context):
     request = context.get("request")
     import uuid
     request_id = (
-        getattr(request, "META", {}).get("HTTP_X_REQUEST_ID") or f"req_{uuid.uuid4().hex[:12]}"
+        getattr(request, "request_id", None)
+        or getattr(request, "META", {}).get("HTTP_X_REQUEST_ID")
+        or f"req_{uuid.uuid4().hex[:12]}"
         if request
         else f"req_{uuid.uuid4().hex[:12]}"
     )

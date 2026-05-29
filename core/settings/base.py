@@ -50,6 +50,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "core.middleware.request_id.RequestIdMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -83,7 +84,10 @@ TEMPLATES = [
 ASGI_APPLICATION = "core.asgi.application"
 
 DATABASES = {
-    "default": env.db("DATABASE_URL", default="postgres://postgres:postgres@127.0.0.1:5432/feast_db")
+    "default": {
+        **env.db("DATABASE_URL", default="postgres://postgres:postgres@127.0.0.1:5432/feast_db"),
+        "CONN_MAX_AGE": env.int("CONN_MAX_AGE", default=60),
+    }
 }
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -147,6 +151,50 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
     "COMPONENT_SPLIT_REQUEST": True,
     "SECURITY": [{"BearerAuth": []}],
+    "POSTPROCESSING_HOOKS": [
+        "drf_spectacular.hooks.postprocess_schema_enums",
+    ],
+    "TAGS": [
+        {"name": "Auth", "description": "Authentication and session management"},
+        {"name": "Orders", "description": "Order creation and retrieval"},
+        {"name": "Payments", "description": "Payment initiation and webhook handling"},
+        {"name": "Kitchen", "description": "Kitchen Display System order management"},
+        {"name": "Tables", "description": "Table and QR code management"},
+        {"name": "RBAC", "description": "Role and permission management"},
+        {"name": "Analytics", "description": "Dashboard and revenue analytics"},
+        {"name": "Recommendations", "description": "Popular products and promotions"},
+        {"name": "Geolocation", "description": "Nearby outlet discovery"},
+        {"name": "Customers", "description": "Customer lookup"},
+        {"name": "Health", "description": "Service health check"},
+    ],
+}
+
+# --- Structured Logging ---
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "json": {
+            "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
+            "format": "%(asctime)s %(name)s %(levelname)s %(message)s %(request_id)s",
+        },
+    },
+    "filters": {
+        "request_id": {"()": "core.middleware.request_id.RequestIdFilter"},
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "json",
+            "filters": ["request_id"],
+        },
+    },
+    "root": {"handlers": ["console"], "level": "INFO"},
+    "loggers": {
+        "django": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "django.db.backends": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "apps": {"handlers": ["console"], "level": "DEBUG", "propagate": False},
+    },
 }
 
 CORS_ALLOWED_ORIGINS = env("CORS_ALLOWED_ORIGINS")

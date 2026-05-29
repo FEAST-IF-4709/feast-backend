@@ -1,9 +1,11 @@
+from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
 from core.responses.standard import StandardResponse
+from core.schema import COMMON_ERROR_RESPONSES
 from core.viewsets.tenant_scoped import TenantScopedViewSet
 from apps.catalog.models import OutletProduct
 from .models import Table
@@ -20,6 +22,14 @@ class TableResolveThrottle(AnonRateThrottle):
     scope = "table_resolve"
 
 
+@extend_schema_view(
+    list=extend_schema(tags=["Tables"], summary="List tables", description="List all tables for the authenticated staff's outlet(s)."),
+    retrieve=extend_schema(tags=["Tables"], summary="Get table", responses={200: TableSerializer, **COMMON_ERROR_RESPONSES}),
+    create=extend_schema(tags=["Tables"], summary="Create table", request=TableCreateSerializer, responses={201: TableSerializer, **COMMON_ERROR_RESPONSES}),
+    update=extend_schema(tags=["Tables"], summary="Update table", request=TableCreateSerializer, responses={200: TableSerializer, **COMMON_ERROR_RESPONSES}),
+    partial_update=extend_schema(tags=["Tables"], summary="Partial update table", request=TableCreateSerializer, responses={200: TableSerializer, **COMMON_ERROR_RESPONSES}),
+    destroy=extend_schema(tags=["Tables"], summary="Delete table", responses={204: None, **COMMON_ERROR_RESPONSES}),
+)
 class TableViewSet(TenantScopedViewSet):
     """
     CRUD for tables scoped to outlet (and brand via outlet FK).
@@ -67,6 +77,12 @@ class TableViewSet(TenantScopedViewSet):
             return TableCreateSerializer
         return TableSerializer
 
+    @extend_schema(
+        tags=["Tables"],
+        summary="Rotate QR token",
+        description="Generate a new QR token for the table, invalidating all existing QR codes. Requires `tables.update` permission.",
+        responses={200: TableSerializer, **COMMON_ERROR_RESPONSES},
+    )
     @action(detail=True, methods=["post"], url_path="rotate-qr")
     def rotate_qr(self, request, pk=None, **kwargs):
         table = self.get_object()
@@ -84,6 +100,13 @@ class PublicTableResolveView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [TableResolveThrottle]
 
+    @extend_schema(
+        tags=["Tables"],
+        summary="Resolve QR token",
+        description="Resolve a table QR token to table and outlet metadata. Used by customers after scanning. Rate-limited to 30/min per IP.",
+        parameters=[OpenApiParameter("token", str, required=True, description="QR token printed on the table")],
+        responses={200: PublicTableResolveSerializer, **COMMON_ERROR_RESPONSES},
+    )
     def get(self, request):
         token = request.query_params.get("token", "").strip()
         if not token:
@@ -121,6 +144,12 @@ class PublicOutletMenuView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=["Tables"],
+        summary="Get outlet menu",
+        description="Returns all available products grouped by category for the specified outlet. No authentication required.",
+        responses={200: PublicMenuProductSerializer(many=True), **COMMON_ERROR_RESPONSES},
+    )
     def get(self, request, outlet_id):
         from apps.tenants.models import Outlet
         try:

@@ -1,8 +1,12 @@
+from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from drf_spectacular.utils import extend_schema, OpenApiParameter
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 
 from core.responses.standard import StandardResponse
+from core.schema import COMMON_ERROR_RESPONSES
 from apps.orders.models import Order
 from .serializers import KitchenOrderSerializer, KitchenStatusUpdateSerializer
 
@@ -19,6 +23,17 @@ class KitchenOrderListView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Kitchen"],
+        summary="List kitchen orders",
+        description="Returns settled orders for the authenticated staff's outlet(s), filtered by fulfillment status. Requires `kitchen.order.view` permission.",
+        parameters=[
+            OpenApiParameter("status", str, description="Comma-separated fulfillment statuses. Default: RECEIVED,IN_PROGRESS,READY"),
+            OpenApiParameter("since", str, description="ISO 8601 datetime — only return orders placed after this timestamp"),
+            OpenApiParameter("limit", int, description="Max orders to return. Default: 100"),
+        ],
+        responses={200: KitchenOrderSerializer(many=True), **COMMON_ERROR_RESPONSES},
+    )
     def get(self, request):
         if not _require_employee_permission(request, "kitchen.order.view"):
             return StandardResponse(
@@ -43,7 +58,7 @@ class KitchenOrderListView(APIView):
             outlet_id__in=tenant["outlet_ids"],
             payment_status=Order.PaymentStatus.SETTLED,
             fulfillment_status__in=filtered_statuses,
-        ).select_related("table", "customer").prefetch_related(
+        ).select_related("table", "customer", "cashier_employee").prefetch_related(
             "items__outlet_product__brand_product__category"
         ).order_by("placed_at")
 
@@ -72,6 +87,13 @@ class KitchenOrderStatusUpdateView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Kitchen"],
+        summary="Update order fulfillment status",
+        description="Advances an order through the fulfillment state machine. Broadcasts the change via WebSocket. Requires `kitchen.order.update_status` permission.",
+        request=KitchenStatusUpdateSerializer,
+        responses={200: KitchenOrderSerializer, **COMMON_ERROR_RESPONSES, 409: None},
+    )
     def patch(self, request, pk):
         if not _require_employee_permission(request, "kitchen.order.update_status"):
             return StandardResponse(
@@ -110,9 +132,25 @@ class KitchenOrderStatusUpdateView(APIView):
 
         with transaction.atomic():
             order_locked = Order.objects.select_for_update().get(pk=pk)
-            order_locked.apply_fulfillment_transition(
-                to_status, changed_by=request.user, notes=notes
-            )
+            try:
+                order_locked.apply_fulfillment_transition(
+                    to_status,
+                    changed_by=request.user,
+                    notes=notes,
+                    actor_permissions=tenant["permissions"],
+                )
+            except DjangoValidationError as exc:
+                return StandardResponse(
+                    success=False, code="STATE_TRANSITION_INVALID",
+                    message=exc.message if hasattr(exc, "message") else str(exc),
+                    status=409, request=request,
+                )
+            except DjangoPermissionDenied as exc:
+                return StandardResponse(
+                    success=False, code="PERMISSION_DENIED",
+                    message=str(exc), status=403, request=request,
+                )
+
             _outlet_id = str(order_locked.outlet_id)
             _order_id = str(order_locked.id)
             _to_status = to_status
@@ -132,6 +170,12 @@ class KitchenOrderCancelView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Kitchen"],
+        summary="Force cancel order",
+        description="Cancels a settled order regardless of its current fulfillment state. Requires `kitchen.order.force_cancel` permission.",
+        responses={200: KitchenOrderSerializer, **COMMON_ERROR_RESPONSES, 409: None},
+    )
     def post(self, request, pk):
         if not _require_employee_permission(request, "kitchen.order.force_cancel"):
             return StandardResponse(
@@ -153,21 +197,30 @@ class KitchenOrderCancelView(APIView):
                 message="Order not found.", status=404, request=request,
             )
 
-        notes = request.data.get("notes", "").strip()
-        if not notes:
+        cancel_reason = request.data.get("cancel_reason", "").strip()
+        if not cancel_reason:
             return StandardResponse(
                 success=False, code="VALIDATION_ERROR",
-                message="Cancel reason (notes) is required.",
+                message="Cancel reason (cancel_reason) is required.",
                 status=400, request=request,
             )
 
         with transaction.atomic():
             order_locked = Order.objects.select_for_update().get(pk=pk)
-            order_locked.apply_fulfillment_transition(
-                Order.FulfillmentStatus.CANCELLED,
-                changed_by=request.user,
-                notes=notes,
-            )
+            try:
+                order_locked.apply_fulfillment_transition(
+                    Order.FulfillmentStatus.CANCELLED,
+                    changed_by=request.user,
+                    notes=cancel_reason,
+                    actor_permissions=tenant["permissions"],
+                )
+            except DjangoValidationError as exc:
+                return StandardResponse(
+                    success=False, code="STATE_TRANSITION_INVALID",
+                    message=exc.message if hasattr(exc, "message") else str(exc),
+                    status=409, request=request,
+                )
+
             _outlet_id = str(order_locked.outlet_id)
             _order_id = str(order_locked.id)
             transaction.on_commit(

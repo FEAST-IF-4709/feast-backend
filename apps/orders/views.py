@@ -1,8 +1,11 @@
 from django.db import transaction
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers as drf_serializers
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 
 from core.responses.standard import StandardResponse
+from core.schema import COMMON_ERROR_RESPONSES
 from .models import Order, OrderItem, OrderStatusHistory
 from .serializers import (
     OrderDetailSerializer,
@@ -18,6 +21,21 @@ class OrderQRTableCreateView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Orders"],
+        summary="Create QR table order (customer)",
+        description="Place a new order as an authenticated customer scanned from a table QR code.",
+        request=OrderQRTableCreateSerializer,
+        responses={
+            201: inline_serializer("QRTableOrderCreated", fields={
+                "order_id": drf_serializers.UUIDField(),
+                "order_number": drf_serializers.CharField(),
+                "grand_total": drf_serializers.DecimalField(max_digits=12, decimal_places=2),
+                "valid_payment_methods": drf_serializers.ListField(child=drf_serializers.CharField()),
+            }),
+            **COMMON_ERROR_RESPONSES,
+        },
+    )
     def post(self, request):
         tenant = getattr(request, "tenant", None)
         if not tenant or tenant.get("actor_type") != "CUSTOMER":
@@ -94,6 +112,13 @@ class OrderCashierPOSCreateView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Orders"],
+        summary="Create cashier POS order",
+        description="Place an order from the cashier POS terminal. Requires `cashier.order.create` permission.",
+        request=OrderCashierPOSCreateSerializer,
+        responses={201: OrderSerializer, **COMMON_ERROR_RESPONSES},
+    )
     def post(self, request):
         tenant = getattr(request, "tenant", None)
         if not tenant or tenant.get("actor_type") != "EMPLOYEE":
@@ -174,6 +199,12 @@ class CustomerOrderListView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Orders"],
+        summary="List customer order history",
+        description="Returns all orders placed by the authenticated customer, newest first.",
+        responses={200: OrderSerializer(many=True), **COMMON_ERROR_RESPONSES},
+    )
     def get(self, request):
         tenant = getattr(request, "tenant", None)
         if not tenant or tenant.get("actor_type") != "CUSTOMER":
@@ -197,6 +228,12 @@ class OrderDetailView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Orders"],
+        summary="Get order details",
+        description="Retrieve full order details including items and status history. Accessible by the order's customer or any employee in the same brand/outlet.",
+        responses={200: OrderDetailSerializer, **COMMON_ERROR_RESPONSES},
+    )
     def get(self, request, pk):
         tenant = getattr(request, "tenant", None)
         actor_type = (tenant or {}).get("actor_type")

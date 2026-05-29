@@ -16,3 +16,5 @@ CHANNEL_LAYERS = {
 }
 
 REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []
+
+LOGGING = {"version": 1, "disable_existing_loggers": True, "handlers": {}, "root": {"handlers": []}}

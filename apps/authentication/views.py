@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework import status as http_status
@@ -5,6 +6,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 
 from core.responses.standard import StandardResponse
+from core.schema import AUTH_ERROR_RESPONSES, COMMON_ERROR_RESPONSES
 from apps.staff.models import Employee
 from apps.customers.models import Customer
 from apps.authentication.models import BlacklistedJTI
@@ -15,12 +17,20 @@ from apps.authentication.serializers import (
     CustomerRegisterSerializer,
     LogoutSerializer,
     TokenRefreshSerializer,
+    TokenResponseSerializer,
 )
 
 
 class StaffLoginView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=["Auth"],
+        summary="Staff login",
+        description="Authenticate a brand employee and return JWT access + refresh tokens.",
+        request=StaffLoginSerializer,
+        responses={200: TokenResponseSerializer, **AUTH_ERROR_RESPONSES},
+    )
     def post(self, request):
         serializer = StaffLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -62,6 +72,13 @@ class StaffLoginView(APIView):
 class CustomerLoginView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=["Auth"],
+        summary="Customer login",
+        description="Authenticate a customer by phone or email and return JWT tokens.",
+        request=CustomerLoginSerializer,
+        responses={200: TokenResponseSerializer, **AUTH_ERROR_RESPONSES},
+    )
     def post(self, request):
         serializer = CustomerLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -98,6 +115,13 @@ class CustomerLoginView(APIView):
 class CustomerRegisterView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=["Auth"],
+        summary="Customer registration",
+        description="Register a new customer account and return JWT tokens.",
+        request=CustomerRegisterSerializer,
+        responses={201: TokenResponseSerializer, **AUTH_ERROR_RESPONSES},
+    )
     def post(self, request):
         serializer = CustomerRegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -143,6 +167,13 @@ class CustomerRegisterView(APIView):
 class FeastTokenRefreshView(APIView):
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=["Auth"],
+        summary="Refresh access token",
+        description="Exchange a valid refresh token for a new access + refresh token pair. The old refresh token is blacklisted.",
+        request=TokenRefreshSerializer,
+        responses={200: TokenResponseSerializer, **AUTH_ERROR_RESPONSES},
+    )
     def post(self, request):
         serializer = TokenRefreshSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -186,6 +217,13 @@ class FeastTokenRefreshView(APIView):
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Auth"],
+        summary="Logout",
+        description="Blacklist the provided refresh token, invalidating the session.",
+        request=LogoutSerializer,
+        responses={200: None, **COMMON_ERROR_RESPONSES},
+    )
     def post(self, request):
         serializer = LogoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

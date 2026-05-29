@@ -1,7 +1,6 @@
 from rest_framework import serializers
 
 from apps.orders.models import Order, OrderItem
-from core.utils.state_machine import FULFILLMENT_TRANSITIONS
 
 
 class KitchenOrderItemSerializer(serializers.ModelSerializer):
@@ -49,15 +48,3 @@ class KitchenOrderSerializer(serializers.ModelSerializer):
 class KitchenStatusUpdateSerializer(serializers.Serializer):
     to_status = serializers.ChoiceField(choices=Order.FulfillmentStatus.choices)
     notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-
-    def validate_to_status(self, value):
-        order = self.context.get("order")
-        if order is None:
-            return value
-        allowed = FULFILLMENT_TRANSITIONS.get(order.fulfillment_status, [])
-        if value not in allowed:
-            raise serializers.ValidationError(
-                f"Cannot transition from {order.fulfillment_status} to {value}. "
-                f"Allowed: {allowed}"
-            )
-        return value

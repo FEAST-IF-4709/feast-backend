@@ -1,9 +1,11 @@
+from drf_spectacular.utils import extend_schema, OpenApiParameter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
 from apps.customers.models import Customer
 from apps.customers.serializers import CustomerPublicSerializer
 from core.responses.standard import StandardResponse
+from core.schema import COMMON_ERROR_RESPONSES
 
 
 class CustomerSearchView(APIView):
@@ -11,6 +13,13 @@ class CustomerSearchView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Customers"],
+        summary="Search customer by phone",
+        description="Exact-match lookup of a customer by phone number. Used by cashiers to link a customer to a POS order. Requires `customer.view` permission.",
+        parameters=[OpenApiParameter("phone", str, required=True, description="Customer phone number (exact match)")],
+        responses={200: CustomerPublicSerializer, **COMMON_ERROR_RESPONSES},
+    )
     def get(self, request):
         tenant = getattr(request, "tenant", None)
         if not tenant or tenant.get("actor_type") != "EMPLOYEE":

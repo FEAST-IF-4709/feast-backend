@@ -1,9 +1,12 @@
 from django.db import transaction
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers as drf_serializers
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
 
 from core.responses.standard import StandardResponse
+from core.schema import COMMON_ERROR_RESPONSES
 from apps.orders.models import Order
 from apps.orders.serializers import OrderSerializer
 from .models import PaymentTransaction, MidtransWebhookLog, ManualSettlement
@@ -20,6 +23,34 @@ class InitiateQRISView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Payments"],
+        summary="Initiate QRIS payment",
+        description="Create a QRIS payment transaction via Midtrans. Returns QR string and image URL. If an active transaction already exists for the order, it is returned instead.",
+        request=InitiateQRISSerializer,
+        responses={
+            200: inline_serializer("QRISResponse", fields={
+                "transaction_id": drf_serializers.CharField(),
+                "qr_string": drf_serializers.CharField(),
+                "qr_image_url": drf_serializers.URLField(),
+                "expires_at": drf_serializers.DateTimeField(),
+                "amount": drf_serializers.DecimalField(max_digits=12, decimal_places=2),
+                "polling_endpoint": drf_serializers.CharField(),
+                "websocket_topic": drf_serializers.CharField(),
+            }),
+            201: inline_serializer("QRISResponseCreated", fields={
+                "transaction_id": drf_serializers.CharField(),
+                "qr_string": drf_serializers.CharField(),
+                "qr_image_url": drf_serializers.URLField(),
+                "expires_at": drf_serializers.DateTimeField(),
+                "amount": drf_serializers.DecimalField(max_digits=12, decimal_places=2),
+                "polling_endpoint": drf_serializers.CharField(),
+                "websocket_topic": drf_serializers.CharField(),
+            }),
+            **COMMON_ERROR_RESPONSES,
+            502: None,
+        },
+    )
     def post(self, request):
         serializer = InitiateQRISSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
@@ -86,6 +117,12 @@ class MidtransWebhookView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=["Payments"],
+        summary="Midtrans payment webhook",
+        description="Receives payment status notifications from Midtrans. Verifies signature before processing. Idempotent — duplicate events are ignored.",
+        responses={200: None, 403: None},
+    )
     def post(self, request):
         payload = request.data
 
@@ -225,6 +262,13 @@ class ManualSettleView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Payments"],
+        summary="Manually settle cash/EDC payment",
+        description="Cashier confirms payment received in cash or via EDC. Marks the order as SETTLED and triggers kitchen broadcast. Requires `cashier.payment.settle_manual` permission.",
+        request=ManualSettleSerializer,
+        responses={201: ManualSettlementSerializer, **COMMON_ERROR_RESPONSES, 409: None},
+    )
     def post(self, request):
         tenant = getattr(request, "tenant", None)
         if not tenant or tenant.get("actor_type") != "EMPLOYEE":
@@ -289,6 +333,20 @@ class PaymentStatusView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Payments"],
+        summary="Get payment status (polling fallback)",
+        description="Poll the current payment and fulfillment status of an order. Prefer WebSocket subscription on `order.{id}` topic for real-time updates.",
+        responses={
+            200: inline_serializer("PaymentStatus", fields={
+                "order_id": drf_serializers.UUIDField(),
+                "payment_status": drf_serializers.CharField(),
+                "fulfillment_status": drf_serializers.CharField(),
+                "expires_at": drf_serializers.DateTimeField(allow_null=True),
+            }),
+            **COMMON_ERROR_RESPONSES,
+        },
+    )
     def get(self, request, order_id):
         tenant = getattr(request, "tenant", None)
         actor_type = (tenant or {}).get("actor_type")

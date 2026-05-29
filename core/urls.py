@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from core.views import HealthCheckView
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -41,6 +42,9 @@ urlpatterns = [
 
     # Analytics Dashboard
     path("api/v1/analytics/", include("apps.analytics.urls")),
+
+    # Health check
+    path("api/v1/health/", HealthCheckView.as_view(), name="health"),
 
     # API Schema & Docs
     path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),

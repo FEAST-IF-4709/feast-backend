@@ -1,11 +1,14 @@
 import math
 
 from django.db.models.expressions import RawSQL
+from drf_spectacular.utils import extend_schema, inline_serializer, OpenApiParameter
+from rest_framework import serializers as drf_serializers
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
 from apps.tenants.models import Outlet
 from core.responses.standard import StandardResponse
+from core.schema import COMMON_ERROR_RESPONSES
 
 _EARTH_RADIUS_KM = 6371.0088
 
@@ -30,6 +33,30 @@ class NearbyOutletsView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        tags=["Geolocation"],
+        summary="Find nearby outlets",
+        description="Returns active outlets within a given radius using Haversine distance. A bounding-box pre-filter is applied before the full distance calculation.",
+        parameters=[
+            OpenApiParameter("lat", float, required=True, description="Latitude of the search origin"),
+            OpenApiParameter("lng", float, required=True, description="Longitude of the search origin"),
+            OpenApiParameter("radius_km", float, description="Search radius in kilometres. Default: 10, max: 100"),
+            OpenApiParameter("limit", int, description="Max results. Default: 20, max: 50"),
+            OpenApiParameter("brand_id", str, description="Optional brand UUID to filter outlets"),
+        ],
+        responses={
+            200: inline_serializer("NearbyOutlet", fields={
+                "id": drf_serializers.UUIDField(),
+                "name": drf_serializers.CharField(),
+                "brand_name": drf_serializers.CharField(),
+                "address": drf_serializers.CharField(),
+                "latitude": drf_serializers.CharField(),
+                "longitude": drf_serializers.CharField(),
+                "distance_km": drf_serializers.FloatField(),
+            }, many=True),
+            **COMMON_ERROR_RESPONSES,
+        },
+    )
     def get(self, request):
         errors = {}
 
