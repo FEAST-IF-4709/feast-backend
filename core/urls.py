@@ -9,6 +9,9 @@ urlpatterns = [
     # Auth
     path("api/v1/auth/", include("apps.authentication.urls")),
 
+    # Brand profile
+    path("api/v1/", include("apps.tenants.urls")),
+
     # RBAC
     path("api/v1/rbac/", include("apps.rbac.urls")),
 
