@@ -138,6 +138,9 @@ SIMPLE_JWT = {
     "USER_ID_CLAIM": "user_id",
 }
 
+# --- Test Runner ---
+TEST_RUNNER = "core.test_runner.PytestTestRunner"
+
 # --- Midtrans ---
 MIDTRANS_SERVER_KEY = env("MIDTRANS_SERVER_KEY", default="")
 MIDTRANS_CLIENT_KEY = env("MIDTRANS_CLIENT_KEY", default="")

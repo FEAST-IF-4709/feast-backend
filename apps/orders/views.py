@@ -1,14 +1,20 @@
 from django.db import transaction
-from drf_spectacular.utils import extend_schema, inline_serializer
-from rest_framework import serializers as drf_serializers
+from django.db.models import Count
+from django.utils.dateparse import parse_date
+from drf_spectacular.utils import extend_schema, inline_serializer, OpenApiParameter
+from rest_framework import generics, serializers as drf_serializers
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 
+from core.permissions.has_permission import HasPermission
 from core.responses.standard import StandardResponse
 from core.schema import COMMON_ERROR_RESPONSES
 from .models import Order, OrderItem, OrderStatusHistory
+from .pagination import OrderCursorPagination
 from .serializers import (
     OrderDetailSerializer,
+    OrderListSerializer,
     OrderSerializer,
     OrderQRTableCreateSerializer,
     OrderCashierPOSCreateSerializer,
@@ -262,3 +268,102 @@ class OrderDetailView(APIView):
             )
 
         return StandardResponse(data=OrderDetailSerializer(order).data, request=request)
+
+
+@extend_schema(
+    tags=["Orders"],
+    summary="List orders",
+    description=(
+        "Returns all orders for the authenticated staff's outlet(s), ordered by most recent first. "
+        "Supports filtering by date range, fulfillment/payment status, outlet, and order number. "
+        "Requires `orders.view` permission. Paginated via cursor (default 25 per page, max 100)."
+    ),
+    parameters=[
+        OpenApiParameter("date_from", str, description="Start date filter. Format: YYYY-MM-DD."),
+        OpenApiParameter("date_to", str, description="End date filter. Format: YYYY-MM-DD."),
+        OpenApiParameter("fulfillment_status", str, description="Comma-separated fulfillment statuses, e.g. RECEIVED,COMPLETED,CANCELLED."),
+        OpenApiParameter("payment_status", str, description="Comma-separated payment statuses, e.g. SETTLED,REFUNDED."),
+        OpenApiParameter("outlet_id", str, description="Filter by specific outlet UUID. Must be one of the tenant's accessible outlets."),
+        OpenApiParameter("order_number", str, description="Partial match on order number (case-insensitive)."),
+        OpenApiParameter("cursor", str, description="Opaque cursor for next/previous page navigation."),
+        OpenApiParameter("page_size", int, description="Items per page. Range: 1–100. Default: 25."),
+    ],
+    responses={200: OrderListSerializer(many=True), **COMMON_ERROR_RESPONSES},
+)
+class OrderListView(generics.ListAPIView):
+    """GET /api/v1/orders/ — Paginated order history for staff dashboard."""
+
+    action = "list"  # required: HasPermission reads view.action; ListAPIView doesn't set it
+    serializer_class = OrderListSerializer
+    permission_classes = [IsAuthenticated, HasPermission]
+    required_permissions = {"list": "orders.view"}
+    pagination_class = OrderCursorPagination
+
+    def get_queryset(self):
+        tenant = self.request.tenant
+        qs = Order.objects.filter(
+            brand_id=tenant["brand_id"],
+            outlet_id__in=tenant["outlet_ids"],
+        )
+        qs = self._apply_filters(qs)
+        return (
+            qs.select_related("outlet", "customer", "table", "cashier_employee")
+              .annotate(items_count=Count("items"))
+              .order_by("-placed_at")
+        )
+
+    def _apply_filters(self, qs):
+        params = self.request.query_params
+
+        if date_from := params.get("date_from"):
+            parsed = parse_date(date_from)
+            if not parsed:
+                raise ValidationError({"date_from": "Invalid date format. Use YYYY-MM-DD."})
+            qs = qs.filter(placed_at__date__gte=parsed)
+
+        if date_to := params.get("date_to"):
+            parsed = parse_date(date_to)
+            if not parsed:
+                raise ValidationError({"date_to": "Invalid date format. Use YYYY-MM-DD."})
+            qs = qs.filter(placed_at__date__lte=parsed)
+
+        if fulfillment := params.get("fulfillment_status"):
+            valid = set(Order.FulfillmentStatus.values)
+            statuses = [s.strip().upper() for s in fulfillment.split(",") if s.strip()]
+            statuses = [s for s in statuses if s in valid]
+            if statuses:
+                qs = qs.filter(fulfillment_status__in=statuses)
+
+        if payment := params.get("payment_status"):
+            valid = set(Order.PaymentStatus.values)
+            statuses = [s.strip().upper() for s in payment.split(",") if s.strip()]
+            statuses = [s for s in statuses if s in valid]
+            if statuses:
+                qs = qs.filter(payment_status__in=statuses)
+
+        if outlet_id := params.get("outlet_id"):
+            allowed = [str(o) for o in self.request.tenant["outlet_ids"]]
+            if outlet_id not in allowed:
+                raise PermissionDenied("Outlet not accessible.")
+            qs = qs.filter(outlet_id=outlet_id)
+
+        if order_number := params.get("order_number"):
+            qs = qs.filter(order_number__icontains=order_number)
+
+        return qs
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return StandardResponse(
+                data=serializer.data,
+                meta={
+                    "next": self.paginator.get_next_link(),
+                    "previous": self.paginator.get_previous_link(),
+                },
+                request=request,
+            )
+        serializer = self.get_serializer(queryset, many=True)
+        return StandardResponse(data=serializer.data, request=request)

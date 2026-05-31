@@ -51,6 +51,31 @@ class OrderDetailSerializer(OrderSerializer):
         fields = OrderSerializer.Meta.fields + ["status_history"]
 
 
+class OrderListSerializer(serializers.ModelSerializer):
+    outlet = serializers.SerializerMethodField()
+    customer_name = serializers.SerializerMethodField()
+    table_label = serializers.SerializerMethodField()
+    items_count = serializers.IntegerField(read_only=True)  # from queryset annotation
+    grand_total = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+    class Meta:
+        model = Order
+        fields = [
+            "id", "order_number", "outlet", "customer_name", "walk_in_name",
+            "table_label", "items_count", "grand_total", "payment_method",
+            "payment_status", "fulfillment_status", "order_source", "placed_at",
+        ]
+
+    def get_outlet(self, obj):
+        return {"id": str(obj.outlet_id), "name": obj.outlet.name}
+
+    def get_customer_name(self, obj):
+        return obj.customer.full_name if obj.customer else None
+
+    def get_table_label(self, obj):
+        return obj.table.label if obj.table else None
+
+
 class OrderQRTableCreateSerializer(serializers.Serializer):
     table_id = serializers.UUIDField()
     items = OrderItemCreateSerializer(many=True, min_length=1)
