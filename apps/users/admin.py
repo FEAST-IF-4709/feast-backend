@@ -1,23 +1,17 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import BaseUser, Employee, Role, Customer
-# Register your models here.
+from apps.users.models import BaseUser
 
 
 @admin.register(BaseUser)
 class BaseUserAdmin(UserAdmin):
-    # Mengatur tampilan kolom di dashboard
-    list_display = ('email', 'user_type', 'is_staff', 'is_active')
-    ordering = ('email',)
-    
-    # Supaya tidak error saat edit user, kita sesuaikan fieldset-nya
-    fieldsets = UserAdmin.fieldsets + (
-        ('Extra Info', {'fields': ('user_type', 'auth_provider')}),
+    list_display = ["email", "is_active", "is_staff", "created_at"]
+    search_fields = ["email"]
+    ordering = ["email"]
+    fieldsets = (
+        (None, {"fields": ("email", "password")}),
+        ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser", "groups", "user_permissions")}),
     )
-    add_fieldsets = UserAdmin.add_fieldsets + (
-        ('Extra Info', {'fields': ('user_type', 'auth_provider')}),
+    add_fieldsets = (
+        (None, {"classes": ("wide",), "fields": ("email", "password1", "password2")}),
     )
-
-admin.site.register(Role)
-admin.site.register(Employee)
-admin.site.register(Customer)

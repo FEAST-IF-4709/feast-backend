@@ -1,15 +1,17 @@
 from django.contrib import admin
-from .models import Brand, Outlet
+from apps.tenants.models import Brand, Outlet
 
-# Register your models here.
+
 @admin.register(Brand)
 class BrandAdmin(admin.ModelAdmin):
-    list_display = ('name', 'created_at') # Kolom yang muncul di tabel
-    search_fields = ('name',)             # Fitur pencarian
+    list_display = ["name", "slug", "subscription_status", "is_active", "created_at"]
+    search_fields = ["name", "slug", "owner_email"]
+    list_filter = ["subscription_status", "is_active"]
+    prepopulated_fields = {"slug": ("name",)}
+
 
 @admin.register(Outlet)
 class OutletAdmin(admin.ModelAdmin):
-    # Hapus 'city', ganti dengan field yang ada di modelmu (contoh: 'address')
-    # Kalau ragu, pakai ('name', 'brand', 'is_active') saja dulu
-    list_display = ('name', 'brand', 'is_active') 
-    list_filter = ('brand', 'is_active')
+    list_display = ["name", "brand", "is_active", "latitude", "longitude"]
+    list_filter = ["brand", "is_active"]
+    search_fields = ["name", "brand__name"]

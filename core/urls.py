@@ -1,31 +1,56 @@
-"""
-URL configuration for core project.
-
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/6.0/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
-"""
 from django.contrib import admin
-from django.urls import path
-from rest_framework_simplejwt.views import (
-    TokenObtainPairView,
-    TokenRefreshView,
-)
+from django.urls import path, include
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from core.views import HealthCheckView
 
 urlpatterns = [
-    # Dashboard Admin bawaan Django
-    path('admin/', admin.site.urls),
-    
-    # Endpoint Login untuk dicolok ke React Dashboard nanti
-    path('api/v1/auth/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
-    path('api/v1/auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path("admin/", admin.site.urls),
+
+    # Auth
+    path("api/v1/auth/", include("apps.authentication.urls")),
+
+    # Brand profile
+    path("api/v1/", include("apps.tenants.urls")),
+
+    # RBAC
+    path("api/v1/rbac/", include("apps.rbac.urls")),
+
+    # Orders
+    path("api/v1/orders/", include("apps.orders.urls")),
+
+    # Customer self-service (me/)
+    path("api/v1/me/", include("apps.orders.me_urls")),
+
+    # Customers (staff-side lookup)
+    path("api/v1/customers/", include("apps.customers.urls")),
+
+    # Payments
+    path("api/v1/payments/", include("apps.payments.urls")),
+
+    # Kitchen Display System
+    path("api/v1/kitchen/", include("apps.kitchen.urls")),
+
+    # Tables (outlet-scoped list/create + global retrieve/update/delete/rotate-qr)
+    path("api/v1/outlets/<uuid:outlet_id>/tables/", include("apps.tables.outlet_urls")),
+    path("api/v1/tables/", include("apps.tables.urls")),
+
+    # Public endpoints (no auth required)
+    path("api/v1/public/", include("apps.tables.public_urls")),
+
+    # Geolocation
+    path("api/v1/", include("apps.geolocation.urls")),
+
+    # Recommendations
+    path("api/v1/recommendations/", include("apps.recommendations.urls")),
+
+    # Analytics Dashboard
+    path("api/v1/analytics/", include("apps.analytics.urls")),
+
+    # Health check
+    path("api/v1/health/", HealthCheckView.as_view(), name="health"),
+
+    # API Schema & Docs
+    path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),
+    path("api/v1/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
+    path("api/v1/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
 ]

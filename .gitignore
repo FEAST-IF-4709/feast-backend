@@ -45,3 +45,8 @@ static_root/
 # OS files
 .DS_Store
 Thumbs.db
+
+#claude
+.claudeignore
+docs/
+claude.md

@@ -1,50 +1,86 @@
-from django.db import models
 import uuid
+from django.db import models
+from django.core.validators import MinValueValidator
+from core.models import TimestampedModel
 
-# Create your models here.
-class Category(models.Model):
+
+class Category(TimestampedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    
-    # Kategori ini milik Brand yang mana?
-    brand = models.ForeignKey('tenants.Brand', on_delete=models.CASCADE, related_name='categories')
-    
+    brand = models.ForeignKey("tenants.Brand", on_delete=models.PROTECT, related_name="categories")
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name_plural = "Categories" # Supaya di Admin tidak tertulis "Categorys"
-        # Memastikan tidak ada nama kategori yang sama di dalam satu Brand
-        unique_together = ('brand', 'name') 
+        constraints = [
+            models.UniqueConstraint(fields=["brand", "name"], name="unique_category_name_per_brand"),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.brand.name})"
 
 
-class Product(models.Model):
+class BrandProduct(TimestampedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    
-    # Relasi
-    brand = models.ForeignKey('tenants.Brand', on_delete=models.CASCADE, related_name='products')
-    category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, related_name='products')
-    
-    # Detail Produk
-    name = models.CharField(max_length=200)
-    description = models.TextField(blank=True, null=True)
-    
-    # Harga wajib DecimalField
-    price = models.DecimalField(max_digits=10, decimal_places=2)
-    
-    # Foto Makanan (Bisa kosong dulu sementara)
-    image = models.ImageField(upload_to='products/images/', blank=True, null=True)
-    
-    # Status ketersediaan (Habis / Tersedia)
-    is_available = models.BooleanField(default=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    brand = models.ForeignKey("tenants.Brand", on_delete=models.PROTECT, related_name="brand_products")
+    category = models.ForeignKey(Category, on_delete=models.PROTECT, related_name="brand_products")
+    name = models.CharField(max_length=150)
+    description = models.TextField(blank=True)
+    base_price = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
+    image = models.ImageField(upload_to="products/images/", blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["brand", "is_active"]),
+        ]
 
     def __str__(self):
-        return f"{self.name} - {self.brand.name}"
+        return f"{self.name} — {self.brand.name}"
+
+
+class OutletProduct(TimestampedModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    brand_product = models.ForeignKey(BrandProduct, on_delete=models.PROTECT, related_name="outlet_products")
+    outlet = models.ForeignKey("tenants.Outlet", on_delete=models.PROTECT, related_name="outlet_products")
+    outlet_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    stock_available = models.BooleanField(default=True)
+    stock_quantity = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["brand_product", "outlet"], name="unique_outlet_product"
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["outlet", "stock_available"]),
+        ]
+
+    @property
+    def effective_price(self):
+        return self.outlet_price if self.outlet_price is not None else self.brand_product.base_price
+
+    def __str__(self):
+        return f"{self.brand_product.name} @ {self.outlet.name}"
+
+
+class Promotion(models.Model):
+    class DiscountType(models.TextChoices):
+        PERCENT = "PERCENT", "Percent"
+        FIXED = "FIXED", "Fixed Amount"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    brand_product = models.ForeignKey(BrandProduct, on_delete=models.CASCADE, related_name="promotions")
+    discount_type = models.CharField(max_length=10, choices=DiscountType.choices)
+    discount_value = models.DecimalField(max_digits=12, decimal_places=2, validators=[MinValueValidator(0)])
+    starts_at = models.DateTimeField(db_index=True)
+    ends_at = models.DateTimeField(db_index=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["brand_product", "is_active", "starts_at", "ends_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.discount_type} {self.discount_value} on {self.brand_product.name}"

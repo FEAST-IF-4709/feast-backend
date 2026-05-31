@@ -1,33 +1,30 @@
 from django.contrib import admin
-from .models import Order, OrderItem
+from apps.orders.models import Order, OrderItem, OrderStatusHistory
 
-# Register your models here.
 
-# Membuat tampilan daftar item pesanan menyatu di dalam halaman Order
 class OrderItemInline(admin.TabularInline):
     model = OrderItem
-    extra = 1 # Jumlah baris kosong default yang disiapkan
-    readonly_fields = ('subtotal',) # Subtotal hanya untuk dibaca karena ini adalah @property (hasil kalkulasi otomatis)
+    extra = 0
+    readonly_fields = ["line_total"]
+
+
+class OrderStatusHistoryInline(admin.TabularInline):
+    model = OrderStatusHistory
+    extra = 0
+    readonly_fields = ["changed_at"]
+
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    # Data yang muncul di tabel depan
-    list_display = ('id', 'outlet', 'customer_name', 'total_amount', 'status', 'payment_status', 'created_at')
-    
-    # Filter di panel kanan
-    list_filter = ('status', 'payment_status', 'order_type', 'outlet')
-    
-    # Fitur pencarian berdasarkan ID Struk atau Nama Pelanggan
-    search_fields = ('id', 'customer_name')
-    
-    # Kolom yang tidak boleh diedit manual
-    readonly_fields = ('id', 'created_at', 'updated_at')
-    
-    # Menyisipkan daftar makanan ke dalam halaman Order
-    inlines = [OrderItemInline]
+    list_display = ["order_number", "outlet", "order_source", "payment_status", "fulfillment_status", "grand_total", "placed_at"]
+    list_filter = ["order_source", "payment_status", "fulfillment_status", "outlet"]
+    search_fields = ["order_number", "customer__full_name", "customer__phone"]
+    readonly_fields = ["id", "order_number", "placed_at"]
+    inlines = [OrderItemInline, OrderStatusHistoryInline]
+
 
 @admin.register(OrderItem)
 class OrderItemAdmin(admin.ModelAdmin):
-    list_display = ('order', 'product', 'quantity', 'price_at_time', 'subtotal')
-    search_fields = ('order__id', 'product__name')
-    readonly_fields = ('subtotal',)
+    list_display = ["order", "quantity", "unit_price", "line_total"]
+    search_fields = ["order__order_number"]
+    readonly_fields = ["line_total"]
