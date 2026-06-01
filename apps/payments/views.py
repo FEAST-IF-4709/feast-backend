@@ -354,11 +354,10 @@ class PaymentStatusView(APIView):
         if actor_type == "CUSTOMER":
             qs = Order.objects.filter(pk=order_id, customer=request.user)
         elif actor_type == "EMPLOYEE":
-            qs = Order.objects.filter(
-                pk=order_id,
-                brand_id=tenant["brand_id"],
-                outlet_id__in=tenant["outlet_ids"],
-            )
+            emp_filter = {"pk": order_id, "brand_id": tenant["brand_id"]}
+            if tenant["outlet_ids"]:
+                emp_filter["outlet_id__in"] = tenant["outlet_ids"]
+            qs = Order.objects.filter(**emp_filter)
         else:
             qs = Order.objects.none()
 

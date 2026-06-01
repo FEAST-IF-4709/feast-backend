@@ -70,7 +70,12 @@ class PublicMenuProductSerializer(serializers.ModelSerializer):
 
     def get_image_url(self, obj):
         img = obj.brand_product.image
-        return img.url if img else None
+        if not img:
+            return None
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(img.url)
+        return img.url
 
     def get_active_promotion(self, obj):
         now = timezone.now()

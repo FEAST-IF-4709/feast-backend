@@ -9,6 +9,7 @@ class Category(TimestampedModel):
     brand = models.ForeignKey("tenants.Brand", on_delete=models.PROTECT, related_name="categories")
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
+    sequence = models.PositiveIntegerField(default=0)
 
     class Meta:
         constraints = [

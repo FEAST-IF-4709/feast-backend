@@ -140,7 +140,8 @@ class OrderCashierPOSCreateSerializer(serializers.Serializer):
         tenant_outlet_ids = [str(o) for o in tenant["outlet_ids"]]
 
         if outlet_id:
-            if str(outlet_id) not in tenant_outlet_ids:
+            # outlet_ids non-empty → outlet-scoped employee, must be in their list
+            if tenant_outlet_ids and str(outlet_id) not in tenant_outlet_ids:
                 raise serializers.ValidationError(
                     {"outlet_id": "Outlet not accessible in tenant context."}
                 )
@@ -154,7 +155,8 @@ class OrderCashierPOSCreateSerializer(serializers.Serializer):
 
         from apps.tenants.models import Outlet
         try:
-            outlet = Outlet.objects.get(pk=outlet_id, is_active=True)
+            # Always scope to brand so brand-level employees can't cross brands
+            outlet = Outlet.objects.get(pk=outlet_id, brand_id=tenant["brand_id"], is_active=True)
         except Outlet.DoesNotExist:
             raise serializers.ValidationError({"outlet_id": "Outlet not found or inactive."})
 
