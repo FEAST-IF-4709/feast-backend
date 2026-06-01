@@ -247,11 +247,9 @@ class OrderDetailView(APIView):
         if actor_type == "CUSTOMER":
             qs = Order.objects.filter(pk=pk, customer=request.user)
         elif actor_type == "EMPLOYEE":
-            qs = Order.objects.filter(
-                pk=pk,
-                brand_id=tenant["brand_id"],
-                outlet_id__in=tenant["outlet_ids"],
-            )
+            qs = Order.objects.filter(pk=pk, brand_id=tenant["brand_id"])
+            if tenant["outlet_ids"]:
+                qs = qs.filter(outlet_id__in=tenant["outlet_ids"])
         else:
             qs = Order.objects.none()
 
@@ -301,10 +299,11 @@ class OrderListView(generics.ListAPIView):
 
     def get_queryset(self):
         tenant = self.request.tenant
-        qs = Order.objects.filter(
-            brand_id=tenant["brand_id"],
-            outlet_id__in=tenant["outlet_ids"],
-        )
+        qs = Order.objects.filter(brand_id=tenant["brand_id"])
+        # Outlet-level staff: restrict to their outlet only.
+        # Brand-level staff (outlet_ids=[]) sees all outlets under the brand.
+        if tenant["outlet_ids"]:
+            qs = qs.filter(outlet_id__in=tenant["outlet_ids"])
         qs = self._apply_filters(qs)
         return (
             qs.select_related("outlet", "customer", "table", "cashier_employee")
@@ -314,6 +313,7 @@ class OrderListView(generics.ListAPIView):
 
     def _apply_filters(self, qs):
         params = self.request.query_params
+        tenant = self.request.tenant
 
         if date_from := params.get("date_from"):
             parsed = parse_date(date_from)
@@ -342,9 +342,13 @@ class OrderListView(generics.ListAPIView):
                 qs = qs.filter(payment_status__in=statuses)
 
         if outlet_id := params.get("outlet_id"):
-            allowed = [str(o) for o in self.request.tenant["outlet_ids"]]
-            if outlet_id not in allowed:
-                raise PermissionDenied("Outlet not accessible.")
+            if tenant["outlet_ids"]:
+                # Outlet-level: validate the requested outlet is their own.
+                allowed = [str(o) for o in tenant["outlet_ids"]]
+                if outlet_id not in allowed:
+                    raise PermissionDenied("Outlet not accessible.")
+            # Brand-level: any outlet under the brand is allowed;
+            # the brand_id filter already enforces the boundary.
             qs = qs.filter(outlet_id=outlet_id)
 
         if order_number := params.get("order_number"):

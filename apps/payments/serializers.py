@@ -14,7 +14,9 @@ class InitiateQRISSerializer(serializers.Serializer):
         filters = {"pk": value, "payment_status": Order.PaymentStatus.PENDING}
         if tenant and tenant.get("actor_type") == "EMPLOYEE":
             filters["brand_id"] = tenant["brand_id"]
-            filters["outlet_id__in"] = tenant["outlet_ids"]
+            # outlet_ids kosong → brand-level employee (owner), cukup scope by brand
+            if tenant["outlet_ids"]:
+                filters["outlet_id__in"] = tenant["outlet_ids"]
 
         try:
             order = Order.objects.select_related("outlet__brand").get(**filters)
@@ -43,12 +45,11 @@ class ManualSettleSerializer(serializers.Serializer):
     def validate_order_id(self, value):
         request = self.context["request"]
         tenant = request.tenant
+        filters = {"pk": value, "brand_id": tenant["brand_id"]}
+        if tenant["outlet_ids"]:
+            filters["outlet_id__in"] = tenant["outlet_ids"]
         try:
-            order = Order.objects.get(
-                pk=value,
-                brand_id=tenant["brand_id"],
-                outlet_id__in=tenant["outlet_ids"],
-            )
+            order = Order.objects.get(**filters)
         except Order.DoesNotExist:
             raise serializers.ValidationError("Order not found.")
 

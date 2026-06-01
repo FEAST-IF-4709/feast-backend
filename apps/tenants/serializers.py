@@ -1,6 +1,6 @@
 import re
 from rest_framework import serializers
-from .models import Brand
+from .models import Brand, Outlet
 
 _VALID_DAYS = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 _TIME_RE = re.compile(r"^\d{2}:\d{2}$")
@@ -47,3 +47,20 @@ class BrandSerializer(serializers.ModelSerializer):
                     f"'{day}' times must be HH:MM format."
                 )
         return value
+
+
+class OutletSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Outlet
+        fields = [
+            "id", "brand_id", "name", "address",
+            "latitude", "longitude", "phone", "opening_hours",
+            "is_active", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "brand_id", "created_at", "updated_at"]
+
+
+class OutletCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Outlet
+        fields = ["name", "address", "latitude", "longitude", "phone", "opening_hours", "is_active"]

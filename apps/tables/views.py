@@ -57,13 +57,22 @@ class TableViewSet(TenantScopedViewSet):
 
         qs = Table.objects.select_related("outlet__brand").filter(
             outlet__brand_id=tenant["brand_id"],
-            outlet_id__in=tenant["outlet_ids"],
         )
+
+        if tenant["outlet_ids"]:
+            qs = qs.filter(outlet_id__in=tenant["outlet_ids"])
 
         if outlet_id := self.kwargs.get("outlet_id"):
             qs = qs.filter(outlet_id=outlet_id)
 
         return qs
+
+    def list(self, request, *args, **kwargs):
+        qs = self.get_queryset()
+        return StandardResponse(
+            data=TableSerializer(qs, many=True).data,
+            request=request,
+        )
 
     def perform_create(self, serializer):
         outlet_id = self.kwargs.get("outlet_id")
@@ -76,6 +85,19 @@ class TableViewSet(TenantScopedViewSet):
         if self.action in ("create", "update", "partial_update"):
             return TableCreateSerializer
         return TableSerializer
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = TableCreateSerializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        instance.refresh_from_db()
+        return StandardResponse(
+            data=TableSerializer(instance).data,
+            message="Table updated.",
+            request=request,
+        )
 
     @extend_schema(
         tags=["Tables"],
@@ -166,7 +188,7 @@ class PublicOutletMenuView(APIView):
             .order_by("brand_product__category__name", "brand_product__name")
         )
 
-        serialized = PublicMenuProductSerializer(products, many=True)
+        serialized = PublicMenuProductSerializer(products, many=True, context={"request": request})
 
         grouped = {}
         for item in serialized.data:

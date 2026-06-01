@@ -53,6 +53,34 @@ def employee_b(db, brand_b, outlet_b, manager_role_b):
 
 
 @pytest.fixture
+def outlet_a2(db, brand_a):
+    return Outlet.objects.create(
+        brand=brand_a,
+        name="Outlet A2",
+        address="Jl. Test No. 3",
+        latitude=Decimal("-6.220000"),
+        longitude=Decimal("106.820000"),
+    )
+
+
+@pytest.fixture
+def owner_role_a(db, brand_a):
+    return Role.objects.create(brand=brand_a, name="OWNER", is_system=True)
+
+
+@pytest.fixture
+def brand_employee(db, brand_a, owner_role_a):
+    """Brand-level employee — outlet=None, sees all outlets in their brand."""
+    emp = Employee(
+        brand=brand_a, outlet=None, role=owner_role_a,
+        email="owner_a@test.com", full_name="Owner A",
+    )
+    emp.set_password("testpass123")
+    emp.save()
+    return emp
+
+
+@pytest.fixture
 def order_perms():
     return frozenset({"orders.view"})
 
@@ -463,3 +491,75 @@ class TestOrderListQueries:
 
         assert resp.status_code == 200
         assert len(resp.data["data"]) == 25  # default page_size
+
+
+# ---------------------------------------------------------------------------
+# Brand-level staff (outlet=None) — multi-outlet visibility
+# ---------------------------------------------------------------------------
+
+class TestOrderListBrandLevelStaff:
+    def test_brand_employee_sees_orders_from_all_outlets(
+        self, db, brand_a, outlet_a, outlet_a2, cashier_employee, brand_employee, order_perms
+    ):
+        """Brand-level staff (outlet_ids=[]) sees orders across all brand outlets."""
+        order1 = _make_order(brand_a, outlet_a, cashier_employee)
+        order2 = _make_order(brand_a, outlet_a2, cashier_employee)
+        req = _make_request(
+            "get", "/orders/",
+            user=brand_employee, brand_id=brand_a.pk, outlet_ids=[],
+            permissions=order_perms,
+        )
+        resp = _list_view(req)
+        assert resp.status_code == 200
+        returned_ids = {item["id"] for item in resp.data["data"]}
+        assert str(order1.pk) in returned_ids
+        assert str(order2.pk) in returned_ids
+
+    def test_brand_employee_can_filter_by_specific_outlet(
+        self, db, brand_a, outlet_a, outlet_a2, cashier_employee, brand_employee, order_perms
+    ):
+        """Brand-level staff can narrow results to a single outlet via outlet_id param."""
+        order1 = _make_order(brand_a, outlet_a, cashier_employee)
+        order2 = _make_order(brand_a, outlet_a2, cashier_employee)
+        req = _make_request(
+            "get", "/orders/",
+            user=brand_employee, brand_id=brand_a.pk, outlet_ids=[],
+            permissions=order_perms,
+            query_params={"outlet_id": str(outlet_a.pk)},
+        )
+        resp = _list_view(req)
+        assert resp.status_code == 200
+        returned_ids = {item["id"] for item in resp.data["data"]}
+        assert str(order1.pk) in returned_ids
+        assert str(order2.pk) not in returned_ids
+
+    def test_brand_employee_cross_brand_isolation(
+        self, db, brand_a, brand_b, outlet_a, outlet_b, cashier_employee,
+        brand_employee, employee_b, order_perms
+    ):
+        """Brand-level staff cannot see orders from another brand."""
+        _make_order(brand_b, outlet_b, employee_b)
+        req = _make_request(
+            "get", "/orders/",
+            user=brand_employee, brand_id=brand_a.pk, outlet_ids=[],
+            permissions=order_perms,
+        )
+        resp = _list_view(req)
+        assert resp.status_code == 200
+        assert resp.data["data"] == []
+
+    def test_outlet_employee_cannot_see_other_outlet_orders(
+        self, db, brand_a, outlet_a, outlet_a2, cashier_employee, brand_employee, order_perms
+    ):
+        """Outlet-level staff (outlet_ids=[outlet_a]) cannot see outlet_a2 orders."""
+        _make_order(brand_a, outlet_a, cashier_employee)
+        order2 = _make_order(brand_a, outlet_a2, cashier_employee)
+        req = _make_request(
+            "get", "/orders/",
+            user=cashier_employee, brand_id=brand_a.pk, outlet_ids=[outlet_a.pk],
+            permissions=order_perms,
+        )
+        resp = _list_view(req)
+        assert resp.status_code == 200
+        returned_ids = {item["id"] for item in resp.data["data"]}
+        assert str(order2.pk) not in returned_ids
