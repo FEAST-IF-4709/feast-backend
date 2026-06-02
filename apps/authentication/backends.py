@@ -28,6 +28,7 @@ class FeastJWTAuthentication(JWTAuthentication):
             outlet_id = token.get("outlet_id")
             outlet_ids_raw = token.get("outlet_ids", [])
             role_id = token.get("role_id")
+            role_rank = token.get("role_rank")
             permissions = token.get("permissions", [])
             actor_type = token.get("actor_type", "EMPLOYEE")
 
@@ -38,6 +39,7 @@ class FeastJWTAuthentication(JWTAuthentication):
                 "outlet_id": uuid.UUID(outlet_id) if outlet_id else None,
                 "outlet_ids": outlet_ids,
                 "role_id": uuid.UUID(role_id) if role_id else None,
+                "role_rank": int(role_rank) if role_rank is not None else None,
                 "permissions": frozenset(permissions),
                 "actor_type": actor_type,
             }

@@ -18,6 +18,7 @@ from apps.authentication.serializers import (
     LogoutSerializer,
     TokenRefreshSerializer,
     TokenResponseSerializer,
+    EmployeeMeSerializer,
 )
 
 
@@ -199,10 +200,32 @@ class FeastTokenRefreshView(APIView):
                 request=request,
             )
 
-        # Blacklist old token, issue new one with same claims
+        # Blacklist old token, issue fresh one with up-to-date claims from DB
         BlacklistedJTI.objects.get_or_create(jti=jti)
+
+        actor_type = refresh.get("actor_type")
+        user_id = refresh.get("user_id")
+
+        if actor_type == "EMPLOYEE":
+            try:
+                employee = (
+                    Employee.objects.select_related("brand", "outlet", "role")
+                    .get(pk=user_id, is_active=True)
+                )
+            except Employee.DoesNotExist:
+                return StandardResponse(
+                    success=False,
+                    code="AUTHENTICATION_REQUIRED",
+                    message="Employee not found or inactive.",
+                    status=http_status.HTTP_401_UNAUTHORIZED,
+                    request=request,
+                )
+            new_tokens = create_employee_tokens(employee)
+            return StandardResponse(data=new_tokens, message="Token refreshed.", request=request)
+
+        # Customer / other actor types: copy claims as-is (no permission list to refresh)
         new_refresh = RefreshToken()
-        for claim in ["user_id", "actor_type", "brand_id", "outlet_id", "outlet_ids", "role_id", "permissions"]:
+        for claim in ["user_id", "actor_type"]:
             val = refresh.get(claim)
             if val is not None:
                 new_refresh[claim] = val
@@ -212,6 +235,45 @@ class FeastTokenRefreshView(APIView):
             message="Token refreshed.",
             request=request,
         )
+
+
+class MeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Auth"],
+        summary="Current employee profile",
+        description="Returns the authenticated employee's profile, role, and list of permission codenames.",
+        responses={200: EmployeeMeSerializer, **COMMON_ERROR_RESPONSES},
+    )
+    def get(self, request):
+        tenant = getattr(request, "tenant", None)
+        if not tenant or tenant.get("actor_type") != "EMPLOYEE":
+            return StandardResponse(
+                success=False,
+                code="PERMISSION_DENIED",
+                message="Only employees can access this endpoint.",
+                status=http_status.HTTP_403_FORBIDDEN,
+                request=request,
+            )
+
+        employee = request.user
+        outlet = getattr(employee, "outlet", None)
+
+        data = {
+            "id": employee.id,
+            "email": employee.email,
+            "full_name": employee.full_name,
+            "outlet_id": employee.outlet_id,
+            "outlet_name": outlet.name if outlet else None,
+            "role": {
+                "id": employee.role_id,
+                "name": employee.role.name,
+                "is_system": employee.role.is_system,
+            },
+            "permissions": sorted(tenant["permissions"]),
+        }
+        return StandardResponse(data=data, message="Profile retrieved.", request=request)
 
 
 class LogoutView(APIView):

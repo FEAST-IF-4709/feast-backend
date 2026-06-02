@@ -6,4 +6,7 @@ urlpatterns = [
     path("webhook/midtrans/", views.MidtransWebhookView.as_view(), name="payment-webhook-midtrans"),
     path("manual-settle/", views.ManualSettleView.as_view(), name="payment-manual-settle"),
     path("<uuid:order_id>/status/", views.PaymentStatusView.as_view(), name="payment-status"),
+    path("<uuid:order_id>/qr-string/", views.QRISStringView.as_view(), name="payment-qr-string"),
+    path("qr-string/<str:order_number>/", views.QRISStringByNumberView.as_view(), name="payment-qr-string-by-number"),
+    path("sandbox/simulate-payment/", views.SandboxSimulatePaymentView.as_view(), name="payment-sandbox-simulate"),
 ]

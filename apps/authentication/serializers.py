@@ -36,3 +36,19 @@ class LogoutSerializer(serializers.Serializer):
 class TokenResponseSerializer(serializers.Serializer):
     access = serializers.CharField()
     refresh = serializers.CharField()
+
+
+class MeRoleSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    is_system = serializers.BooleanField()
+
+
+class EmployeeMeSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    email = serializers.EmailField()
+    full_name = serializers.CharField()
+    outlet_id = serializers.UUIDField(allow_null=True)
+    outlet_name = serializers.CharField(allow_null=True)
+    role = MeRoleSerializer()
+    permissions = serializers.ListField(child=serializers.CharField())

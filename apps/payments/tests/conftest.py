@@ -1,12 +1,15 @@
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.tenants.models import Brand, Outlet
 from apps.staff.models import Employee
 from apps.rbac.models import Role
 from apps.orders.models import Order
+from apps.payments.models import PaymentTransaction
 
 
 @pytest.fixture
@@ -58,6 +61,24 @@ def pending_qris_order(db, brand, outlet):
         payment_status=Order.PaymentStatus.PENDING,
         subtotal=Decimal("75000.00"),
         grand_total=Decimal("75000.00"),
+    )
+
+
+@pytest.fixture
+def qris_payment_transaction(db, pending_qris_order):
+    """Active PaymentTransaction for pending_qris_order, midtrans_order_id = order_number."""
+    return PaymentTransaction.objects.create(
+        order=pending_qris_order,
+        midtrans_order_id=pending_qris_order.order_number,
+        transaction_id="txn-test-001",
+        payment_type="qris",
+        gross_amount=pending_qris_order.grand_total,
+        qr_string="00020101test",
+        qr_image_url="https://example.com/qr.png",
+        expires_at=timezone.now() + timedelta(minutes=15),
+        transaction_status="pending",
+        raw_request_payload={},
+        raw_response_payload={},
     )
 
 

@@ -17,6 +17,8 @@ class Role(models.Model):
     brand = models.ForeignKey("tenants.Brand", on_delete=models.CASCADE, related_name="roles")
     name = models.CharField(max_length=80)
     is_system = models.BooleanField(default=False)
+    # Hierarchy rank: lower number = higher authority. None = custom role (no system rank).
+    rank = models.PositiveSmallIntegerField(null=True, blank=True)
 
     class Meta:
         constraints = [

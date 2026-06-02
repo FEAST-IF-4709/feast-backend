@@ -21,11 +21,12 @@ class MidtransClient:
             else "https://api.sandbox.midtrans.com"
         )
 
-    def charge_qris(self, order, customer_details=None):
+    def charge_qris(self, order, customer_details=None, midtrans_order_id=None):
+        effective_order_id = midtrans_order_id or order.order_number
         payload = {
             "payment_type": "qris",
             "transaction_details": {
-                "order_id": order.order_number,
+                "order_id": effective_order_id,
                 "gross_amount": int(order.grand_total),
             },
             "qris": {"acquirer": "gopay"},
@@ -46,6 +47,7 @@ class MidtransClient:
             raise MidtransError(str(exc)) from exc
 
         return {
+            "midtrans_order_id": effective_order_id,
             "qr_string": resp_data.get("qr_string"),
             "qr_image_url": resp_data.get("qr_image_url"),
             "transaction_id": resp_data.get("transaction_id"),

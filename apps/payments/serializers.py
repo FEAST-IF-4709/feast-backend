@@ -11,7 +11,7 @@ class InitiateQRISSerializer(serializers.Serializer):
         request = self.context["request"]
         tenant = getattr(request, "tenant", None)
 
-        filters = {"pk": value, "payment_status": Order.PaymentStatus.PENDING}
+        filters = {"pk": value, "payment_status__in": [Order.PaymentStatus.PENDING, Order.PaymentStatus.EXPIRED]}
         if tenant and tenant.get("actor_type") == "EMPLOYEE":
             filters["brand_id"] = tenant["brand_id"]
             # outlet_ids kosong → brand-level employee (owner), cukup scope by brand

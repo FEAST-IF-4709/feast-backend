@@ -94,7 +94,7 @@ class DashboardConsumer(AsyncJsonWebsocketConsumer):
         outlet_id = self.scope["url_route"]["kwargs"]["outlet_id"]
         tenant = self.scope.get("tenant")
 
-        if not tenant or "kitchen.order.view" not in tenant["permissions"]:
+        if not tenant or "dashboard.view" not in tenant["permissions"]:
             await self.close(code=4403)
             return
 
