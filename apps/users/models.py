@@ -1,6 +1,7 @@
 import uuid
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+from django.contrib.auth.hashers import make_password, check_password as django_check_password
 
 
 class BaseUserManager(BaseUserManager):
@@ -41,3 +42,32 @@ class BaseUser(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+
+
+class SuperAdmin(models.Model):
+    """
+    System-level super administrator. NOT tied to any Brand or Outlet.
+    Has full access to everything including cross-brand Brand CRUD.
+    Authenticates independently via actor_type=SUPERADMIN JWT claims.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    email = models.EmailField(unique=True)
+    password = models.CharField(max_length=128)
+    full_name = models.CharField(max_length=150)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # DRF duck-type interface
+    is_authenticated = True
+    is_anonymous = False
+
+    def set_password(self, raw_password):
+        self.password = make_password(raw_password)
+
+    def check_password(self, raw_password):
+        return django_check_password(raw_password, self.password)
+
+    def __str__(self):
+        return f"[SUPERADMIN] {self.full_name} <{self.email}>"

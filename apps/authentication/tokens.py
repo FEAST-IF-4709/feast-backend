@@ -2,6 +2,19 @@ from apps.tenants.models import Outlet
 from rest_framework_simplejwt.tokens import RefreshToken
 
 
+def create_superadmin_tokens(superadmin) -> dict:
+    """Issue a JWT pair for a SuperAdmin with actor_type=SUPERADMIN and no brand/outlet scope."""
+    refresh = RefreshToken()
+    refresh["user_id"] = str(superadmin.id)
+    refresh["actor_type"] = "SUPERADMIN"
+    refresh["full_name"] = superadmin.full_name
+    refresh["email"] = superadmin.email
+    return {
+        "refresh": str(refresh),
+        "access": str(refresh.access_token),
+    }
+
+
 def create_employee_tokens(employee) -> dict:
     """Issue a JWT pair for an Employee with full tenant claims."""
     refresh = RefreshToken()
