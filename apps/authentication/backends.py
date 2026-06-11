@@ -24,13 +24,27 @@ class FeastJWTAuthentication(JWTAuthentication):
 
     def _attach_tenant(self, request, token):
         try:
+            actor_type = token.get("actor_type", "EMPLOYEE")
+
+            if actor_type == "SUPERADMIN":
+                request.tenant = {
+                    "brand_id": None,
+                    "outlet_id": None,
+                    "outlet_ids": [],
+                    "role_id": None,
+                    "role_rank": None,
+                    "permissions": frozenset(),
+                    "actor_type": "SUPERADMIN",
+                    "is_superadmin": True,
+                }
+                return
+
             brand_id = token.get("brand_id")
             outlet_id = token.get("outlet_id")
             outlet_ids_raw = token.get("outlet_ids", [])
             role_id = token.get("role_id")
             role_rank = token.get("role_rank")
             permissions = token.get("permissions", [])
-            actor_type = token.get("actor_type", "EMPLOYEE")
 
             outlet_ids = [uuid.UUID(oid) for oid in outlet_ids_raw if oid]
 
@@ -42,6 +56,7 @@ class FeastJWTAuthentication(JWTAuthentication):
                 "role_rank": int(role_rank) if role_rank is not None else None,
                 "permissions": frozenset(permissions),
                 "actor_type": actor_type,
+                "is_superadmin": False,
             }
         except (TypeError, ValueError, AttributeError):
             request.tenant = None
@@ -72,6 +87,9 @@ class FeastJWTAuthentication(JWTAuthentication):
             elif actor_type == "CUSTOMER":
                 from apps.customers.models import Customer
                 return Customer.objects.get(pk=user_id, is_active=True)
+            elif actor_type == "SUPERADMIN":
+                from apps.users.models import SuperAdmin
+                return SuperAdmin.objects.get(pk=user_id, is_active=True)
             else:
                 raise AuthenticationFailed(f"Unknown actor_type: {actor_type}")
         except AuthenticationFailed:

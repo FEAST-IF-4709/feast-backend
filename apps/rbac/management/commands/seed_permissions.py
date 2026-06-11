@@ -7,6 +7,8 @@ PERMISSION_CATALOG = [
     # Brand & Outlet
     ("brand", "brand.view", "View brand info"),
     ("brand", "brand.update", "Update brand info"),
+    ("brand", "brand.create", "Create new brand (SuperAdmin)"),
+    ("brand", "brand.delete", "Delete brand (SuperAdmin)"),
     ("outlet", "outlet.view", "View outlets"),
     ("outlet", "outlet.create", "Create outlet"),
     ("outlet", "outlet.update", "Update outlet"),

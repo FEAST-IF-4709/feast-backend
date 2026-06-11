@@ -10,7 +10,7 @@ from core.schema import AUTH_ERROR_RESPONSES, COMMON_ERROR_RESPONSES
 from apps.staff.models import Employee
 from apps.customers.models import Customer
 from apps.authentication.models import BlacklistedJTI
-from apps.authentication.tokens import create_employee_tokens, create_customer_tokens
+from apps.authentication.tokens import create_employee_tokens, create_customer_tokens, create_superadmin_tokens
 from apps.authentication.serializers import (
     StaffLoginSerializer,
     CustomerLoginSerializer,
@@ -223,6 +223,21 @@ class FeastTokenRefreshView(APIView):
             new_tokens = create_employee_tokens(employee)
             return StandardResponse(data=new_tokens, message="Token refreshed.", request=request)
 
+        if actor_type == "SUPERADMIN":
+            from apps.users.models import SuperAdmin
+            try:
+                superadmin = SuperAdmin.objects.get(pk=user_id, is_active=True)
+            except SuperAdmin.DoesNotExist:
+                return StandardResponse(
+                    success=False,
+                    code="AUTHENTICATION_REQUIRED",
+                    message="SuperAdmin not found or inactive.",
+                    status=http_status.HTTP_401_UNAUTHORIZED,
+                    request=request,
+                )
+            new_tokens = create_superadmin_tokens(superadmin)
+            return StandardResponse(data=new_tokens, message="Token refreshed.", request=request)
+
         # Customer / other actor types: copy claims as-is (no permission list to refresh)
         new_refresh = RefreshToken()
         for claim in ["user_id", "actor_type"]:
@@ -274,6 +289,53 @@ class MeView(APIView):
             "permissions": sorted(tenant["permissions"]),
         }
         return StandardResponse(data=data, message="Profile retrieved.", request=request)
+
+
+class SuperAdminLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        tags=["Auth"],
+        summary="SuperAdmin login",
+        description="Authenticate a SuperAdmin (system-level, no brand scope) and return JWT tokens.",
+        request=StaffLoginSerializer,
+        responses={200: TokenResponseSerializer, **AUTH_ERROR_RESPONSES},
+    )
+    def post(self, request):
+        from apps.users.models import SuperAdmin
+        serializer = StaffLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data["email"]
+        password = serializer.validated_data["password"]
+
+        try:
+            superadmin = SuperAdmin.objects.get(email=email, is_active=True)
+        except SuperAdmin.DoesNotExist:
+            return StandardResponse(
+                success=False,
+                code="AUTHENTICATION_REQUIRED",
+                message="Invalid credentials.",
+                status=http_status.HTTP_401_UNAUTHORIZED,
+                request=request,
+            )
+
+        if not superadmin.check_password(password):
+            return StandardResponse(
+                success=False,
+                code="AUTHENTICATION_REQUIRED",
+                message="Invalid credentials.",
+                status=http_status.HTTP_401_UNAUTHORIZED,
+                request=request,
+            )
+
+        tokens = create_superadmin_tokens(superadmin)
+        return StandardResponse(
+            data=tokens,
+            message="SuperAdmin login successful.",
+            request=request,
+            status=http_status.HTTP_200_OK,
+        )
 
 
 class LogoutView(APIView):

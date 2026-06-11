@@ -13,6 +13,7 @@ __pycache__/
 .venv
 env/
 venv/
+venv_Feast-BE/
 ENV/
 env.bak/
 venv.bak/

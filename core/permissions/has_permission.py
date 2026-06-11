@@ -5,6 +5,7 @@ class HasPermission(BasePermission):
     """
     Checks that request.tenant["permissions"] contains the required codename
     declared in view.required_permissions[view.action].
+    SuperAdmin (actor_type=SUPERADMIN) bypasses all permission checks.
     """
 
     def has_permission(self, request, view):
@@ -13,6 +14,8 @@ class HasPermission(BasePermission):
         tenant = getattr(request, "tenant", None)
         if tenant is None:
             return False
+        if tenant.get("is_superadmin"):
+            return True
         action = getattr(view, "action", request.method.lower())
         required = getattr(view, "required_permissions", {}).get(action)
         if required is None:
