@@ -61,6 +61,14 @@ PERMISSION_CATALOG = [
     ("dashboard", "dashboard.view", "View dashboard"),
 ]
 
+# Hierarchy rank per system role. Lower number = higher authority.
+ROLE_RANKS = {
+    "BRAND_OWNER": 1,
+    "MANAGER": 2,
+    "CASHIER": 3,
+    "KITCHEN": 3,
+}
+
 # Permissions per system role
 ROLE_BASELINES = {
     "BRAND_OWNER": [p[1] for p in PERMISSION_CATALOG],
@@ -121,10 +129,11 @@ class Command(BaseCommand):
                 role, _ = Role.objects.get_or_create(
                     brand=brand,
                     name=role_name,
-                    defaults={"is_system": True},
+                    defaults={"is_system": True, "rank": ROLE_RANKS.get(role_name)},
                 )
                 role.is_system = True
-                role.save(update_fields=["is_system"])
+                role.rank = ROLE_RANKS.get(role_name)
+                role.save(update_fields=["is_system", "rank"])
 
                 existing_codes = set(
                     role.rolepermissions.values_list("permission__codename", flat=True)

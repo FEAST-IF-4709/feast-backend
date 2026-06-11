@@ -1,3 +1,4 @@
+from apps.tenants.models import Outlet
 from rest_framework_simplejwt.tokens import RefreshToken
 
 
@@ -5,7 +6,16 @@ def create_employee_tokens(employee) -> dict:
     """Issue a JWT pair for an Employee with full tenant claims."""
     refresh = RefreshToken()
 
-    outlet_ids = [str(employee.outlet_id)] if employee.outlet_id else []
+    if employee.outlet_id:
+        # Outlet-level staff → scoped to their one outlet
+        outlet_ids = [str(employee.outlet_id)]
+    else:
+        # Brand-level employee (owner/manager) → all outlets of the brand
+        outlet_ids = [
+            str(oid)
+            for oid in Outlet.objects.filter(brand_id=employee.brand_id)
+            .values_list("id", flat=True)
+        ]
 
     permissions = list(
         employee.role.rolepermissions.select_related("permission")
@@ -18,6 +28,7 @@ def create_employee_tokens(employee) -> dict:
     refresh["outlet_id"] = str(employee.outlet_id) if employee.outlet_id else None
     refresh["outlet_ids"] = outlet_ids
     refresh["role_id"] = str(employee.role_id)
+    refresh["role_rank"] = employee.role.rank  # None for custom roles
     refresh["permissions"] = permissions
 
     return {

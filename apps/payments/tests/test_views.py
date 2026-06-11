@@ -22,6 +22,7 @@ class TestInitiateQRIS:
     def test_success_creates_payment_transaction(self, db, pending_qris_order, cashier_emp, settings):
         settings.MIDTRANS_SERVER_KEY = "test-key"
         fake_result = {
+            "midtrans_order_id": pending_qris_order.order_number,
             "transaction_id": "txn-abc123",
             "qr_string": "00020101test",
             "qr_image_url": "https://example.com/qr.png",
@@ -85,7 +86,7 @@ class TestMidtransWebhook:
             processing_result=MidtransWebhookLog.ProcessingResult.REJECTED_INVALID_SIG,
         ).exists()
 
-    def test_settlement_sets_order_settled(self, db, pending_qris_order, settings):
+    def test_settlement_sets_order_settled(self, db, pending_qris_order, qris_payment_transaction, settings):
         settings.MIDTRANS_SERVER_KEY = "test-key"
         order_number = pending_qris_order.order_number
         gross_amount = "75000.00"
@@ -137,7 +138,7 @@ class TestMidtransWebhook:
             processing_result=MidtransWebhookLog.ProcessingResult.IGNORED_DUPLICATE,
         ).exists()
 
-    def test_settlement_after_expire_ignored(self, db, pending_qris_order, settings):
+    def test_settlement_after_expire_ignored(self, db, pending_qris_order, qris_payment_transaction, settings):
         settings.MIDTRANS_SERVER_KEY = "test-key"
         pending_qris_order.payment_status = Order.PaymentStatus.EXPIRED
         pending_qris_order.save(update_fields=["payment_status"])

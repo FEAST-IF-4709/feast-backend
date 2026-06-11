@@ -1,4 +1,9 @@
+import hashlib
+from datetime import datetime
+
+from django.conf import settings as django_settings
 from django.db import transaction
+from django.http import HttpResponse
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers as drf_serializers
@@ -56,6 +61,15 @@ class InitiateQRISView(APIView):
         serializer.is_valid(raise_exception=True)
         order = serializer._order
 
+        if not order.brand.is_accepting_orders:
+            return StandardResponse(
+                success=False,
+                code="RESTAURANT_CLOSED",
+                message="Restoran sedang tutup dan tidak menerima pesanan baru.",
+                status=403,
+                request=request,
+            )
+
         existing = PaymentTransaction.objects.filter(
             order=order, expires_at__gt=timezone.now()
         ).first()
@@ -66,9 +80,19 @@ class InitiateQRISView(APIView):
                 request=request,
             )
 
+        # Retry after expiry: reuse existing PT record with a new Midtrans order_id.
+        expired_pt = PaymentTransaction.objects.filter(order=order).first()
+        if expired_pt:
+            base = expired_pt.midtrans_order_id.rsplit("-r", 1)[0]
+            parts = expired_pt.midtrans_order_id.rsplit("-r", 1)
+            retry_n = int(parts[1]) + 1 if len(parts) > 1 and parts[1].isdigit() else 2
+            new_midtrans_order_id = f"{base}-r{retry_n}"
+        else:
+            new_midtrans_order_id = None
+
         client = MidtransClient()
         try:
-            result = client.charge_qris(order)
+            result = client.charge_qris(order, midtrans_order_id=new_midtrans_order_id)
         except MidtransError as exc:
             return StandardResponse(
                 success=False,
@@ -78,19 +102,35 @@ class InitiateQRISView(APIView):
                 request=request,
             )
 
-        pt = PaymentTransaction.objects.create(
-            order=order,
-            midtrans_order_id=order.order_number,
-            transaction_id=result["transaction_id"],
-            payment_type="qris",
-            gross_amount=order.grand_total,
-            qr_string=result["qr_string"],
-            qr_image_url=result["qr_image_url"],
-            expires_at=result["expires_at"],
-            transaction_status="pending",
-            raw_request_payload=result["raw_request_payload"],
-            raw_response_payload=result["raw_response_payload"],
-        )
+        with transaction.atomic():
+            if expired_pt:
+                expired_pt.midtrans_order_id = result["midtrans_order_id"]
+                expired_pt.transaction_id = result["transaction_id"]
+                expired_pt.qr_string = result["qr_string"]
+                expired_pt.qr_image_url = result["qr_image_url"]
+                expired_pt.expires_at = result["expires_at"]
+                expired_pt.transaction_status = "pending"
+                expired_pt.raw_request_payload = result["raw_request_payload"]
+                expired_pt.raw_response_payload = result["raw_response_payload"]
+                expired_pt.save()
+                pt = expired_pt
+                if order.payment_status == order.PaymentStatus.EXPIRED:
+                    order.payment_status = order.PaymentStatus.PENDING
+                    order.save(update_fields=["payment_status"])
+            else:
+                pt = PaymentTransaction.objects.create(
+                    order=order,
+                    midtrans_order_id=result["midtrans_order_id"],
+                    transaction_id=result["transaction_id"],
+                    payment_type="qris",
+                    gross_amount=order.grand_total,
+                    qr_string=result["qr_string"],
+                    qr_image_url=result["qr_image_url"],
+                    expires_at=result["expires_at"],
+                    transaction_status="pending",
+                    raw_request_payload=result["raw_request_payload"],
+                    raw_response_payload=result["raw_response_payload"],
+                )
 
         return StandardResponse(
             data=self._build_response(pt, order),
@@ -100,7 +140,7 @@ class InitiateQRISView(APIView):
         )
 
     def _build_response(self, pt, order):
-        return {
+        data = {
             "transaction_id": pt.transaction_id,
             "qr_string": pt.qr_string,
             "qr_image_url": pt.qr_image_url,
@@ -109,6 +149,9 @@ class InitiateQRISView(APIView):
             "polling_endpoint": f"/api/v1/payments/{order.id}/status/",
             "websocket_topic": f"order.{order.id}",
         }
+        if not getattr(django_settings, "MIDTRANS_IS_PRODUCTION", True):
+            data["qr_string_url"] = f"/api/v1/payments/{order.id}/qr-string/"
+        return data
 
 
 class MidtransWebhookView(APIView):
@@ -167,11 +210,15 @@ class MidtransWebhookView(APIView):
 
         try:
             with transaction.atomic():
-                order = (
-                    Order.objects.select_for_update()
-                    .select_related("outlet")
-                    .get(order_number=order_id)
-                )
+                try:
+                    pt_locked = (
+                        PaymentTransaction.objects.select_for_update()
+                        .select_related("order__outlet")
+                        .get(midtrans_order_id=order_id)
+                    )
+                    order = pt_locked.order
+                except PaymentTransaction.DoesNotExist:
+                    raise Order.DoesNotExist
 
                 # REFUNDED dan EXPIRED adalah terminal absolut — tidak boleh ditimpa apapun
                 if order.payment_status in (Order.PaymentStatus.REFUNDED, Order.PaymentStatus.EXPIRED):
@@ -380,3 +427,161 @@ class PaymentStatusView(APIView):
             pass
 
         return StandardResponse(data=data, request=request)
+
+
+class QRISStringView(APIView):
+    """GET /api/v1/payments/{order_id}/qr-string/ — sandbox only, returns raw qr_string as plain text."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, order_id):
+        if getattr(django_settings, "MIDTRANS_IS_PRODUCTION", True):
+            return HttpResponse("Not available in production.", status=404, content_type="text/plain")
+
+        tenant = getattr(request, "tenant", None)
+        actor_type = (tenant or {}).get("actor_type")
+
+        if actor_type == "CUSTOMER":
+            qs = Order.objects.filter(pk=order_id, customer=request.user)
+        elif actor_type == "EMPLOYEE":
+            emp_filter = {"pk": order_id, "brand_id": tenant["brand_id"]}
+            if tenant["outlet_ids"]:
+                emp_filter["outlet_id__in"] = tenant["outlet_ids"]
+            qs = Order.objects.filter(**emp_filter)
+        else:
+            qs = Order.objects.none()
+
+        return _qr_string_response(qs)
+
+
+class QRISStringByNumberView(APIView):
+    """GET /api/v1/payments/qr-string/{order_number}/ — sandbox only, accepts human-readable order number."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, order_number):
+        if getattr(django_settings, "MIDTRANS_IS_PRODUCTION", True):
+            return HttpResponse("Not available in production.", status=404, content_type="text/plain")
+
+        tenant = getattr(request, "tenant", None)
+        actor_type = (tenant or {}).get("actor_type")
+
+        if actor_type == "CUSTOMER":
+            qs = Order.objects.filter(order_number=order_number, customer=request.user)
+        elif actor_type == "EMPLOYEE":
+            emp_filter = {"order_number": order_number, "brand_id": tenant["brand_id"]}
+            if tenant["outlet_ids"]:
+                emp_filter["outlet_id__in"] = tenant["outlet_ids"]
+            qs = Order.objects.filter(**emp_filter)
+        else:
+            qs = Order.objects.none()
+
+        return _qr_string_response(qs)
+
+
+def _qr_string_response(qs):
+    order = qs.first()
+    if not order:
+        return HttpResponse("Order not found.", status=404, content_type="text/plain")
+    try:
+        qr_string = order.payment_transaction.qr_string or ""
+    except PaymentTransaction.DoesNotExist:
+        return HttpResponse("No QRIS transaction found for this order.", status=404, content_type="text/plain")
+    return HttpResponse(qr_string, content_type="text/plain; charset=utf-8")
+
+
+class SandboxSimulatePaymentView(APIView):
+    """POST /api/v1/payments/sandbox/simulate-payment/ — sandbox only.
+
+    Simulates a Midtrans settlement webhook for a QRIS order, bypassing the
+    Midtrans simulator UI. Accepts order_id (UUID) or order_number (string).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if getattr(django_settings, "MIDTRANS_IS_PRODUCTION", True):
+            return StandardResponse(
+                success=False, code="FORBIDDEN",
+                message="Sandbox simulation is not available in production.",
+                status=403, request=request,
+            )
+
+        order_id = request.data.get("order_id")
+        order_number = request.data.get("order_number")
+
+        if not order_id and not order_number:
+            return StandardResponse(
+                success=False, code="VALIDATION_ERROR",
+                message="Provide either order_id or order_number.",
+                status=400, request=request,
+            )
+
+        try:
+            if order_id:
+                pt = PaymentTransaction.objects.select_related("order").get(order__pk=order_id)
+            else:
+                pt = PaymentTransaction.objects.select_related("order").get(order__order_number=order_number)
+        except PaymentTransaction.DoesNotExist:
+            return StandardResponse(
+                success=False, code="NOT_FOUND",
+                message="No QRIS transaction found for this order.",
+                status=404, request=request,
+            )
+
+        order = pt.order
+        if order.payment_status != Order.PaymentStatus.PENDING:
+            return StandardResponse(
+                success=False, code="INVALID_STATE",
+                message=f"Order payment_status is '{order.payment_status}', expected PENDING.",
+                status=409, request=request,
+            )
+
+        server_key = getattr(django_settings, "MIDTRANS_SERVER_KEY", "")
+        midtrans_order_id = pt.midtrans_order_id
+        gross_amount = f"{pt.gross_amount:.2f}"
+        status_code = "200"
+        transaction_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        raw = f"{midtrans_order_id}{status_code}{gross_amount}{server_key}"
+        signature_key = hashlib.sha512(raw.encode()).hexdigest()
+
+        payload = {
+            "order_id": midtrans_order_id,
+            "status_code": status_code,
+            "gross_amount": gross_amount,
+            "transaction_status": "settlement",
+            "transaction_time": transaction_time,
+            "signature_key": signature_key,
+        }
+
+        with transaction.atomic():
+            order_locked = Order.objects.select_for_update().get(pk=order.pk)
+            order_locked.payment_status = Order.PaymentStatus.SETTLED
+            order_locked.save(update_fields=["payment_status"])
+
+            PaymentTransaction.objects.filter(order=order_locked).update(
+                transaction_status="settlement",
+                last_webhook_payload=payload,
+            )
+            MidtransWebhookLog.objects.create(
+                midtrans_order_id=midtrans_order_id,
+                transaction_status="settlement",
+                signature_valid=True,
+                payload=payload,
+                processing_result=MidtransWebhookLog.ProcessingResult.APPLIED,
+            )
+
+            _outlet_id = str(order_locked.outlet_id)
+            _order_id = str(order_locked.id)
+            transaction.on_commit(lambda: _broadcast_settled(_outlet_id, _order_id))
+
+        order_locked.refresh_from_db()
+        return StandardResponse(
+            data={
+                "order_number": order_locked.order_number,
+                "payment_status": order_locked.payment_status,
+            },
+            message="Settlement simulated successfully.",
+            request=request,
+        )

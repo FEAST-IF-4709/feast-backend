@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from core.responses.standard import StandardResponse
 from core.schema import COMMON_ERROR_RESPONSES
 from apps.orders.models import Order
+from apps.tenants.models import Outlet
 from .serializers import KitchenOrderSerializer, KitchenStatusUpdateSerializer
 
 
@@ -29,6 +30,7 @@ class KitchenOrderListView(APIView):
         description="Returns settled orders for the authenticated staff's outlet(s), filtered by fulfillment status. Requires `kitchen.order.view` permission.",
         parameters=[
             OpenApiParameter("status", str, description="Comma-separated fulfillment statuses. Default: RECEIVED,IN_PROGRESS,READY"),
+            OpenApiParameter("outlet_id", str, description="Filter by a specific outlet UUID (must be in caller's outlet_ids)"),
             OpenApiParameter("since", str, description="ISO 8601 datetime — only return orders placed after this timestamp"),
             OpenApiParameter("limit", int, description="Max orders to return. Default: 100"),
         ],
@@ -61,6 +63,17 @@ class KitchenOrderListView(APIView):
         ).select_related("table", "customer", "cashier_employee").prefetch_related(
             "items__outlet_product__brand_product__category"
         ).order_by("placed_at")
+
+        outlet_id_param = request.query_params.get("outlet_id")
+        if outlet_id_param:
+            allowed = [str(oid) for oid in tenant["outlet_ids"]]
+            if outlet_id_param not in allowed:
+                return StandardResponse(
+                    success=False, code="PERMISSION_DENIED",
+                    message="Outlet not accessible.",
+                    status=403, request=request,
+                )
+            qs = qs.filter(outlet_id=outlet_id_param)
 
         since = request.query_params.get("since")
         if since:
@@ -252,3 +265,31 @@ def _broadcast_cancel(outlet_id, order_id_str):
         "fulfillment.status_changed",
         {"fulfillment_status": Order.FulfillmentStatus.CANCELLED},
     )
+
+
+class KitchenOutletListView(APIView):
+    """GET /api/v1/kitchen/outlets/ — outlets accessible to the current kitchen user."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Kitchen"],
+        summary="List outlets for kitchen user",
+        description="Returns id + name for every outlet the caller has kitchen access to. Requires `kitchen.order.view`.",
+        responses={200: None, **COMMON_ERROR_RESPONSES},
+    )
+    def get(self, request):
+        if not _require_employee_permission(request, "kitchen.order.view"):
+            return StandardResponse(
+                success=False, code="PERMISSION_DENIED",
+                message="Missing permission: kitchen.order.view",
+                status=403, request=request,
+            )
+
+        outlet_ids = request.tenant.get("outlet_ids", [])
+        outlets = (
+            Outlet.objects.filter(id__in=outlet_ids)
+            .order_by("name")
+            .values("id", "name")
+        )
+        return StandardResponse(data=list(outlets), request=request)

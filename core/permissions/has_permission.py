@@ -13,7 +13,8 @@ class HasPermission(BasePermission):
         tenant = getattr(request, "tenant", None)
         if tenant is None:
             return False
-        required = getattr(view, "required_permissions", {}).get(view.action)
+        action = getattr(view, "action", request.method.lower())
+        required = getattr(view, "required_permissions", {}).get(action)
         if required is None:
             return True
         return required in tenant["permissions"]

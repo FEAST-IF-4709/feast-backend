@@ -5,6 +5,7 @@ from apps.authentication.views import (
     CustomerRegisterView,
     FeastTokenRefreshView,
     LogoutView,
+    MeView,
 )
 
 urlpatterns = [
@@ -13,4 +14,5 @@ urlpatterns = [
     path("customer/register/", CustomerRegisterView.as_view(), name="customer-register"),
     path("token/refresh/", FeastTokenRefreshView.as_view(), name="token-refresh"),
     path("logout/", LogoutView.as_view(), name="logout"),
+    path("me/", MeView.as_view(), name="me"),
 ]
