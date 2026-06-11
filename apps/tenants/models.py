@@ -38,6 +38,11 @@ class Brand(TimestampedModel):
     logo_url = models.URLField(max_length=500, blank=True, default="")
     location_address = models.TextField(blank=True, default="")
     operating_hours = models.JSONField(default=get_default_operating_hours, blank=True)
+    is_accepting_orders = models.BooleanField(default=True)
+    is_auto_accept = models.BooleanField(default=False)
+    is_busy_mode = models.BooleanField(default=False)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
 
     def __str__(self):
         return self.name

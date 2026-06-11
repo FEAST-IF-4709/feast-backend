@@ -29,7 +29,7 @@ class MidtransClient:
                 "order_id": effective_order_id,
                 "gross_amount": int(order.grand_total),
             },
-            "qris": {"acquirer": "gopay"},
+            "qris": {},
         }
         if customer_details:
             payload["customer_details"] = customer_details
@@ -46,10 +46,21 @@ class MidtransClient:
         except Exception as exc:
             raise MidtransError(str(exc)) from exc
 
+        # qr_image_url may be top-level (old GoPay format) or inside actions[] (new QRIS format).
+        # Prefer generate-qr-code-v2 (sandbox simulator compatible), fall back to generate-qr-code.
+        qr_image_url = resp_data.get("qr_image_url")
+        if not qr_image_url:
+            actions = resp_data.get("actions", [])
+            for name in ("generate-qr-code-v2", "generate-qr-code"):
+                action = next((a for a in actions if a.get("name") == name), None)
+                if action:
+                    qr_image_url = action.get("url")
+                    break
+
         return {
             "midtrans_order_id": effective_order_id,
             "qr_string": resp_data.get("qr_string"),
-            "qr_image_url": resp_data.get("qr_image_url"),
+            "qr_image_url": qr_image_url,
             "transaction_id": resp_data.get("transaction_id"),
             "expires_at": timezone.now() + timedelta(minutes=15),
             "raw_request_payload": payload,

@@ -21,15 +21,9 @@ class BrandProfileViewSet(viewsets.ViewSet):
         brand = get_object_or_404(Brand, id=request.tenant["brand_id"])
 
         if request.method == "PATCH":
-            if "brand.update" not in request.tenant.get("permissions", frozenset()):
-                return StandardResponse(
-                    success=False,
-                    code="FORBIDDEN",
-                    message="You do not have brand.update permission.",
-                    status=403,
-                    request=request,
-                )
-            serializer = BrandSerializer(brand, data=request.data, partial=True)
+            serializer = BrandSerializer(
+                brand, data=request.data, partial=True, context={"request": request}
+            )
             serializer.is_valid(raise_exception=True)
             serializer.save()
             return StandardResponse(
@@ -38,7 +32,10 @@ class BrandProfileViewSet(viewsets.ViewSet):
                 request=request,
             )
 
-        return StandardResponse(data=BrandSerializer(brand).data, request=request)
+        return StandardResponse(
+            data=BrandSerializer(brand, context={"request": request}).data,
+            request=request,
+        )
 
 
 @extend_schema_view(

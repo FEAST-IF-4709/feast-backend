@@ -61,6 +61,15 @@ class InitiateQRISView(APIView):
         serializer.is_valid(raise_exception=True)
         order = serializer._order
 
+        if not order.brand.is_accepting_orders:
+            return StandardResponse(
+                success=False,
+                code="RESTAURANT_CLOSED",
+                message="Restoran sedang tutup dan tidak menerima pesanan baru.",
+                status=403,
+                request=request,
+            )
+
         existing = PaymentTransaction.objects.filter(
             order=order, expires_at__gt=timezone.now()
         ).first()
