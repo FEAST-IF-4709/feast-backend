@@ -13,9 +13,22 @@ _TIME_RE = re.compile(r"^\d{2}:\d{2}$")
 _PHONE_RE = re.compile(r"^(\+62|08)\d{7,13}$")
 
 
+class PublicBrandSerializer(serializers.ModelSerializer):
+    """Read-only public brand info — no sensitive fields (owner_email, subscription_status)."""
+
+    class Meta:
+        model = Brand
+        fields = [
+            "id", "name", "slug", "description", "cuisine_type",
+            "logo_url", "banner_url", "phone", "location_address",
+            "operating_hours", "is_accepting_orders", "is_busy_mode",
+            "latitude", "longitude",
+        ]
+
+
 class BrandSerializer(serializers.ModelSerializer):
-    # Write-only: accepts an uploaded image file; result is stored in logo_url.
     logo = serializers.ImageField(write_only=True, required=False, allow_null=True)
+    banner = serializers.ImageField(write_only=True, required=False, allow_null=True)
 
     class Meta:
         model = Brand
@@ -23,8 +36,10 @@ class BrandSerializer(serializers.ModelSerializer):
             "id", "name", "slug", "owner_email",
             "subscription_status", "is_active",
             "description", "phone", "cuisine_type",
-            "logo_url", "logo", "location_address", "operating_hours",
+            "logo_url", "logo", "banner_url", "banner",
+            "location_address", "operating_hours",
             "is_accepting_orders", "is_auto_accept", "is_busy_mode",
+            "tax_rate",
             "latitude", "longitude",
             "created_at", "updated_at",
         ]
@@ -59,30 +74,33 @@ class BrandSerializer(serializers.ModelSerializer):
                 )
         return value
 
+    def _save_image(self, image_file, folder):
+        ext = os.path.splitext(image_file.name)[1].lower() or ".jpg"
+        filename = f"{folder}/{uuid_module.uuid4()}{ext}"
+        saved_path = default_storage.save(filename, image_file)
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(
+                "/" + django_settings.MEDIA_URL.lstrip("/") + saved_path
+            )
+        return "/" + django_settings.MEDIA_URL.lstrip("/") + saved_path
+
     def update(self, instance, validated_data):
         logo_file = validated_data.pop("logo", None)
+        banner_file = validated_data.pop("banner", None)
         if logo_file:
-            ext = os.path.splitext(logo_file.name)[1].lower() or ".jpg"
-            filename = f"brand_logos/{uuid_module.uuid4()}{ext}"
-            saved_path = default_storage.save(filename, logo_file)
-            request = self.context.get("request")
-            if request:
-                validated_data["logo_url"] = request.build_absolute_uri(
-                    "/" + django_settings.MEDIA_URL.lstrip("/") + saved_path
-                )
-            else:
-                validated_data["logo_url"] = "/" + django_settings.MEDIA_URL.lstrip("/") + saved_path
+            validated_data["logo_url"] = self._save_image(logo_file, "brand_logos")
+        if banner_file:
+            validated_data["banner_url"] = self._save_image(banner_file, "brand_banners")
         return super().update(instance, validated_data)
 
     def to_representation(self, instance):
         ret = super().to_representation(instance)
-        logo_url = ret.get("logo_url")
-        if logo_url and not logo_url.startswith("http"):
-            request = self.context.get("request")
-            if request:
-                ret["logo_url"] = request.build_absolute_uri(
-                    "/" + logo_url.lstrip("/")
-                )
+        request = self.context.get("request")
+        for field in ("logo_url", "banner_url"):
+            url = ret.get(field)
+            if url and not url.startswith("http") and request:
+                ret[field] = request.build_absolute_uri("/" + url.lstrip("/"))
         return ret
 
 
@@ -95,8 +113,9 @@ class BrandAdminSerializer(serializers.ModelSerializer):
             "id", "name", "slug", "owner_email",
             "subscription_status", "is_active",
             "description", "phone", "cuisine_type",
-            "logo_url", "location_address", "operating_hours",
+            "logo_url", "banner_url", "location_address", "operating_hours",
             "is_accepting_orders", "is_auto_accept", "is_busy_mode",
+            "tax_rate",
             "latitude", "longitude",
             "created_at", "updated_at",
         ]
@@ -150,6 +169,17 @@ class BrandAdminSerializer(serializers.ModelSerializer):
                     f"'{day}' times must be HH:MM format."
                 )
         return value
+
+
+class PublicOutletSerializer(serializers.ModelSerializer):
+    """Read-only public outlet info for customer-facing views."""
+
+    class Meta:
+        model = Outlet
+        fields = [
+            "id", "brand_id", "name", "address",
+            "latitude", "longitude", "phone", "opening_hours",
+        ]
 
 
 class OutletSerializer(serializers.ModelSerializer):

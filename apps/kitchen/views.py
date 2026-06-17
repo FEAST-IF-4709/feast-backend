@@ -166,9 +166,10 @@ class KitchenOrderStatusUpdateView(APIView):
 
             _outlet_id = str(order_locked.outlet_id)
             _order_id = str(order_locked.id)
-            _to_status = to_status
+            # Ambil status akhir dari model — bisa berbeda dari to_status jika ada auto-advance
+            _final_status = order_locked.fulfillment_status
             transaction.on_commit(
-                lambda: _broadcast_status_change(_outlet_id, _order_id, _to_status)
+                lambda: _broadcast_status_change(_outlet_id, _order_id, _final_status)
             )
 
         return StandardResponse(

@@ -12,18 +12,26 @@ class InitiateQRISSerializer(serializers.Serializer):
         tenant = getattr(request, "tenant", None)
 
         filters = {"pk": value, "payment_status__in": [Order.PaymentStatus.PENDING, Order.PaymentStatus.EXPIRED]}
-        if tenant and tenant.get("actor_type") == "EMPLOYEE":
+        actor_type = tenant.get("actor_type") if tenant else None
+        if actor_type == "EMPLOYEE":
             filters["brand_id"] = tenant["brand_id"]
             # outlet_ids kosong → brand-level employee (owner), cukup scope by brand
             if tenant["outlet_ids"]:
                 filters["outlet_id__in"] = tenant["outlet_ids"]
+        elif actor_type == "CUSTOMER":
+            filters["customer"] = request.user
 
         try:
             order = Order.objects.select_related("outlet__brand").get(**filters)
         except Order.DoesNotExist:
             raise serializers.ValidationError("Order not found or not pending.")
 
-        if order.payment_method not in (
+        # QR table / mobile orders dibuat tanpa payment_method (dipilih saat bayar).
+        # Endpoint ini hanya untuk QRIS, jadi set sekarang jika belum di-set.
+        if not order.payment_method:
+            order.payment_method = Order.PaymentMethod.QRIS_MIDTRANS
+            order.save(update_fields=["payment_method"])
+        elif order.payment_method not in (
             Order.PaymentMethod.QRIS_MIDTRANS,
             Order.PaymentMethod.BANK_TRANSFER_MIDTRANS,
         ):

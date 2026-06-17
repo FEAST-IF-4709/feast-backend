@@ -18,6 +18,8 @@ from .serializers import (
     OrderSerializer,
     OrderQRTableCreateSerializer,
     OrderCashierPOSCreateSerializer,
+    CustomerOrderSummarySerializer,
+    CustomerOrderDetailSerializer,
     compute_order_totals,
 )
 
@@ -36,6 +38,9 @@ class OrderQRTableCreateView(APIView):
             201: inline_serializer("QRTableOrderCreated", fields={
                 "order_id": drf_serializers.UUIDField(),
                 "order_number": drf_serializers.CharField(),
+                "subtotal": drf_serializers.DecimalField(max_digits=12, decimal_places=2),
+                "discount_total": drf_serializers.DecimalField(max_digits=12, decimal_places=2),
+                "tax_amount": drf_serializers.DecimalField(max_digits=12, decimal_places=2),
                 "grand_total": drf_serializers.DecimalField(max_digits=12, decimal_places=2),
                 "valid_payment_methods": drf_serializers.ListField(child=drf_serializers.CharField()),
             }),
@@ -59,8 +64,8 @@ class OrderQRTableCreateView(APIView):
         outlet = data["_outlet"]
         product_map = data["_product_map"]
 
-        order_items_payload, subtotal, discount_total, grand_total = compute_order_totals(
-            data["items"], product_map
+        order_items_payload, subtotal, discount_total, tax_amount, grand_total = compute_order_totals(
+            data["items"], product_map, tax_rate=outlet.brand.tax_rate
         )
 
         with transaction.atomic():
@@ -74,6 +79,7 @@ class OrderQRTableCreateView(APIView):
                 fulfillment_status=Order.FulfillmentStatus.RECEIVED,
                 subtotal=subtotal,
                 discount_total=discount_total,
+                tax_amount=tax_amount,
                 grand_total=grand_total,
                 notes=data.get("notes", ""),
             )
@@ -98,6 +104,9 @@ class OrderQRTableCreateView(APIView):
         response_data = {
             "order_id": str(order.id),
             "order_number": order.order_number,
+            "subtotal": str(order.subtotal),
+            "discount_total": str(order.discount_total),
+            "tax_amount": str(order.tax_amount),
             "grand_total": str(order.grand_total),
             "valid_payment_methods": [
                 Order.PaymentMethod.QRIS_MIDTRANS,
@@ -150,8 +159,8 @@ class OrderCashierPOSCreateView(APIView):
         outlet = data["_outlet"]
         product_map = data["_product_map"]
 
-        order_items_payload, subtotal, discount_total, grand_total = compute_order_totals(
-            data["items"], product_map
+        order_items_payload, subtotal, discount_total, tax_amount, grand_total = compute_order_totals(
+            data["items"], product_map, tax_rate=outlet.brand.tax_rate
         )
 
         customer_id = data.get("customer_id")
@@ -171,6 +180,7 @@ class OrderCashierPOSCreateView(APIView):
                 fulfillment_status=Order.FulfillmentStatus.RECEIVED,
                 subtotal=subtotal,
                 discount_total=discount_total,
+                tax_amount=tax_amount,
                 grand_total=grand_total,
                 notes=data.get("notes", ""),
             )
@@ -209,7 +219,7 @@ class CustomerOrderListView(APIView):
         tags=["Orders"],
         summary="List customer order history",
         description="Returns all orders placed by the authenticated customer, newest first.",
-        responses={200: OrderSerializer(many=True), **COMMON_ERROR_RESPONSES},
+        responses={200: CustomerOrderSummarySerializer(many=True), **COMMON_ERROR_RESPONSES},
     )
     def get(self, request):
         tenant = getattr(request, "tenant", None)
@@ -226,7 +236,7 @@ class CustomerOrderListView(APIView):
             .prefetch_related("items")
             .order_by("-placed_at")
         )
-        return StandardResponse(data=OrderSerializer(qs, many=True).data, request=request)
+        return StandardResponse(data=CustomerOrderSummarySerializer(qs, many=True).data, request=request)
 
 
 class OrderDetailView(APIView):
@@ -265,7 +275,8 @@ class OrderDetailView(APIView):
                 status=404, request=request,
             )
 
-        return StandardResponse(data=OrderDetailSerializer(order).data, request=request)
+        serializer_class = CustomerOrderDetailSerializer if actor_type == "CUSTOMER" else OrderDetailSerializer
+        return StandardResponse(data=serializer_class(order).data, request=request)
 
 
 @extend_schema(

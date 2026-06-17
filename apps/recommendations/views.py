@@ -3,13 +3,13 @@ from datetime import timedelta
 from django.core.cache import cache
 from django.db.models import Sum
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema, inline_serializer, OpenApiParameter
-from rest_framework import serializers as drf_serializers
+from drf_spectacular.utils import extend_schema, OpenApiParameter
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
-from apps.catalog.models import BrandProduct
+from apps.catalog.models import BrandProduct, OutletProduct
 from apps.orders.models import OrderItem
+from apps.tables.serializers import PublicMenuProductSerializer
 from core.responses.standard import StandardResponse
 from core.schema import COMMON_ERROR_RESPONSES
 
@@ -23,21 +23,19 @@ class PopularProductsView(APIView):
 
     @extend_schema(
         tags=["Recommendations"],
-        summary="Popular products",
-        description="Returns the top-selling products for a brand within the given time window. Results are cached for 5 minutes.",
+        summary="Popular products (terlaris)",
+        description=(
+            "Returns the top-selling products for a brand ranked by quantity sold "
+            "in the given time window. When `outlet_id` is supplied the response "
+            "matches the `MenuItem` shape used by the mobile menu (id = outlet_product_id, "
+            "price, image_url, stock_available, active_promotion) plus `total_qty_sold`. "
+            "Results are cached for 5 minutes."
+        ),
         parameters=[
-            OpenApiParameter("limit", int, description="Max results to return. Default: 10, max: 50"),
-            OpenApiParameter("window_days", int, description="Lookback window in days. Default: 30, max: 365"),
-            OpenApiParameter("outlet_id", str, description="Filter by outlet UUID. Default: all outlets"),
+            OpenApiParameter("limit", int, description="Max results (default 10, max 50)"),
+            OpenApiParameter("window_days", int, description="Lookback window in days (default 30, max 365)"),
+            OpenApiParameter("outlet_id", str, description="Filter by outlet UUID for full MenuItem shape. Default: all outlets"),
         ],
-        responses={
-            200: inline_serializer("PopularProduct", fields={
-                "brand_product_id": drf_serializers.UUIDField(),
-                "name": drf_serializers.CharField(),
-                "total_qty_sold": drf_serializers.IntegerField(),
-            }, many=True),
-            **COMMON_ERROR_RESPONSES,
-        },
     )
     def get(self, request, brand_id):
         try:
@@ -51,10 +49,9 @@ class PopularProductsView(APIView):
             window_days = 30
 
         outlet_id = request.query_params.get("outlet_id", "all")
-
         cache_key = f"recommendations:popular:{brand_id}:{outlet_id}:{window_days}"
 
-        def _query():
+        def _rank_query():
             cutoff = timezone.now() - timedelta(days=window_days)
             qs = OrderItem.objects.filter(
                 order__brand_id=brand_id,
@@ -64,26 +61,65 @@ class PopularProductsView(APIView):
             )
             if outlet_id != "all":
                 qs = qs.filter(order__outlet_id=outlet_id)
-
             return list(
-                qs.values(
-                    "outlet_product__brand_product_id",
-                    "outlet_product__brand_product__name",
-                )
+                qs.values("outlet_product__brand_product_id")
                 .annotate(total_qty=Sum("quantity"))
                 .order_by("-total_qty")[:limit]
             )
 
-        results = cache.get_or_set(cache_key, _query, _CACHE_TTL)
+        ranked = cache.get_or_set(cache_key, _rank_query, _CACHE_TTL)
+        if not ranked:
+            return StandardResponse(data=[], request=request)
 
-        data = [
-            {
-                "brand_product_id": str(row["outlet_product__brand_product_id"]),
-                "name": row["outlet_product__brand_product__name"],
-                "total_qty_sold": row["total_qty"],
+        bp_id_to_qty = {
+            str(r["outlet_product__brand_product_id"]): r["total_qty"]
+            for r in ranked
+        }
+        bp_ids = [str(r["outlet_product__brand_product_id"]) for r in ranked]
+
+        if outlet_id != "all":
+            outlet_products = {
+                str(op.brand_product_id): op
+                for op in OutletProduct.objects.filter(
+                    outlet_id=outlet_id,
+                    brand_product_id__in=bp_ids,
+                    brand_product__is_active=True,
+                ).select_related("brand_product__category")
             }
-            for row in results
-        ]
+            data = []
+            for bp_id in bp_ids:
+                op = outlet_products.get(bp_id)
+                if op is None:
+                    continue
+                item = dict(
+                    PublicMenuProductSerializer(op, context={"request": request}).data
+                )
+                item["total_qty_sold"] = bp_id_to_qty[bp_id]
+                data.append(item)
+        else:
+            brand_products = {
+                str(bp.id): bp
+                for bp in BrandProduct.objects.filter(
+                    id__in=bp_ids, brand_id=brand_id, is_active=True
+                ).select_related("category")
+            }
+            data = []
+            for bp_id in bp_ids:
+                bp = brand_products.get(bp_id)
+                if bp is None:
+                    continue
+                image_url = None
+                if bp.image:
+                    image_url = request.build_absolute_uri(bp.image.url)
+                data.append({
+                    "brand_product_id": bp_id,
+                    "name": bp.name,
+                    "description": bp.description,
+                    "category": bp.category.name,
+                    "base_price": str(bp.base_price),
+                    "image_url": image_url,
+                    "total_qty_sold": bp_id_to_qty[bp_id],
+                })
 
         return StandardResponse(data=data, request=request)
 
@@ -95,13 +131,16 @@ class OnPromotionView(APIView):
 
     @extend_schema(
         tags=["Recommendations"],
-        summary="Products on promotion",
-        description="Returns brand products with an active promotion at the current time. Results are cached for 5 minutes.",
+        summary="Products on promotion (hot deals)",
+        description=(
+            "Returns products with an active promotion. When `outlet_id` is supplied "
+            "the response matches the `MenuItem` shape (id = outlet_product_id, price, "
+            "image_url, stock_available, active_promotion). Results are cached for 5 minutes."
+        ),
         parameters=[
-            OpenApiParameter("limit", int, description="Max results. Default: 10, max: 50"),
-            OpenApiParameter("outlet_id", str, description="Filter by outlet UUID. Default: all outlets"),
+            OpenApiParameter("limit", int, description="Max results (default 10, max 50)"),
+            OpenApiParameter("outlet_id", str, description="Filter by outlet UUID for full MenuItem shape. Default: all outlets"),
         ],
-        responses={200: None, **COMMON_ERROR_RESPONSES},
     )
     def get(self, request, brand_id):
         try:
@@ -110,12 +149,11 @@ class OnPromotionView(APIView):
             limit = 10
 
         outlet_id = request.query_params.get("outlet_id", "all")
-
         cache_key = f"recommendations:promotions:{brand_id}:{outlet_id}"
 
-        def _query():
+        def _promo_query():
             now = timezone.now()
-            qs = (
+            return list(
                 BrandProduct.objects.filter(
                     brand_id=brand_id,
                     is_active=True,
@@ -124,28 +162,51 @@ class OnPromotionView(APIView):
                     promotions__ends_at__gte=now,
                 )
                 .distinct()
-                .select_related("category")
-                .prefetch_related("promotions")[:limit]
+                .values_list("id", flat=True)[:limit]
             )
-            return [
-                {
-                    "brand_product_id": str(p.id),
-                    "name": p.name,
-                    "base_price": str(p.base_price),
-                    "category": p.category.name,
+
+        bp_ids = [str(pk) for pk in cache.get_or_set(cache_key, _promo_query, _CACHE_TTL)]
+        if not bp_ids:
+            return StandardResponse(data=[], request=request)
+
+        if outlet_id != "all":
+            outlet_products = list(
+                OutletProduct.objects.filter(
+                    outlet_id=outlet_id,
+                    brand_product_id__in=bp_ids,
+                    brand_product__is_active=True,
+                ).select_related("brand_product__category")
+            )
+            data = PublicMenuProductSerializer(
+                outlet_products, many=True, context={"request": request}
+            ).data
+        else:
+            now = timezone.now()
+            brand_products = BrandProduct.objects.filter(
+                id__in=bp_ids, is_active=True
+            ).select_related("category").prefetch_related("promotions")
+            result = []
+            for bp in brand_products:
+                image_url = request.build_absolute_uri(bp.image.url) if bp.image else None
+                active_promos = [
+                    p for p in bp.promotions.all()
+                    if p.is_active and p.starts_at <= now <= p.ends_at
+                ]
+                result.append({
+                    "brand_product_id": str(bp.id),
+                    "name": bp.name,
+                    "base_price": str(bp.base_price),
+                    "category": bp.category.name,
+                    "image_url": image_url,
                     "promotions": [
                         {
-                            "discount_type": promo.discount_type,
-                            "discount_value": str(promo.discount_value),
-                            "ends_at": promo.ends_at.isoformat(),
+                            "discount_type": p.discount_type,
+                            "discount_value": str(p.discount_value),
+                            "ends_at": p.ends_at.isoformat(),
                         }
-                        for promo in p.promotions.all()
-                        if promo.is_active and promo.starts_at <= now <= promo.ends_at
+                        for p in active_promos
                     ],
-                }
-                for p in qs
-            ]
+                })
+            data = result
 
-        results = cache.get_or_set(cache_key, _query, _CACHE_TTL)
-
-        return StandardResponse(data=results, request=request)
+        return StandardResponse(data=data, request=request)

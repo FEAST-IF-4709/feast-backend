@@ -76,6 +76,7 @@ class Order(models.Model):
     )
     subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     discount_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     grand_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     placed_at = models.DateTimeField(db_index=True, default=timezone.now)
     notes = models.TextField(null=True, blank=True)
@@ -146,6 +147,18 @@ class Order(models.Model):
             changed_by=changed_by,
             notes=notes,
         )
+
+        # SERVED adalah state transient untuk dine-in: langsung auto-advance ke COMPLETED
+        if to_status == self.FulfillmentStatus.SERVED:
+            self.fulfillment_status = self.FulfillmentStatus.COMPLETED
+            self.save(update_fields=["fulfillment_status"])
+            OrderStatusHistory.objects.create(
+                order=self,
+                from_status=self.FulfillmentStatus.SERVED,
+                to_status=self.FulfillmentStatus.COMPLETED,
+                changed_by=changed_by,
+                notes="Auto-completed after served.",
+            )
 
     def __str__(self):
         return f"{self.order_number} — {self.outlet.name}"
