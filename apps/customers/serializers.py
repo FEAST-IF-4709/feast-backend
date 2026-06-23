@@ -51,14 +51,18 @@ class LoyaltyTransactionSerializer(serializers.ModelSerializer):
 class LoyaltyAccountSerializer(serializers.ModelSerializer):
     transactions = LoyaltyTransactionSerializer(many=True, read_only=True)
     tier_points_in_window = serializers.SerializerMethodField()
+    active_voucher_count = serializers.SerializerMethodField()
 
     class Meta:
         model = LoyaltyAccount
-        fields = ["id", "points_balance", "tier", "tier_points_in_window", "created_at", "updated_at", "transactions"]
+        fields = ["id", "points_balance", "tier", "tier_points_in_window", "active_voucher_count", "created_at", "updated_at", "transactions"]
 
     def get_tier_points_in_window(self, obj):
         from apps.customers.loyalty import get_tier_points_in_window
         return get_tier_points_in_window(obj)
+
+    def get_active_voucher_count(self, obj):
+        return obj.customer.vouchers.filter(status="AVAILABLE").count()
 
 
 class VoucherTemplateSerializer(serializers.ModelSerializer):
@@ -67,11 +71,12 @@ class VoucherTemplateSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
     applicable_categories = serializers.SerializerMethodField()
     applicable_products = serializers.SerializerMethodField()
+    brand_name = serializers.CharField(source="brand.name", read_only=True)
 
     class Meta:
         model = VoucherTemplate
         fields = [
-            "id", "brand_id", "title", "description", "image_url",
+            "id", "brand_id", "brand_name", "title", "description", "image_url",
             "points_cost", "discount_type", "discount_value",
             "applicable_scope", "applicable_categories", "applicable_products",
             "is_active", "valid_days", "created_at", "updated_at",

@@ -83,5 +83,32 @@ class Promotion(models.Model):
             models.Index(fields=["brand_product", "is_active", "starts_at", "ends_at"]),
         ]
 
+    is_hot_deal = models.BooleanField(default=False, db_index=True)
+
     def __str__(self):
         return f"{self.discount_type} {self.discount_value} on {self.brand_product.name}"
+
+
+class BrandFeaturedBanner(models.Model):
+    """One special-offer banner per brand, managed from the dashboard."""
+
+    brand = models.OneToOneField(
+        "tenants.Brand",
+        on_delete=models.CASCADE,
+        related_name="featured_banner",
+    )
+    title = models.CharField(max_length=120)
+    subtitle = models.CharField(max_length=200, blank=True, default="")
+    image_url = models.URLField(max_length=500)
+    target_outlet = models.ForeignKey(
+        "tenants.Outlet",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="featured_banners",
+    )
+    is_active = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"FeaturedBanner — {self.brand.name} ({'active' if self.is_active else 'inactive'})"

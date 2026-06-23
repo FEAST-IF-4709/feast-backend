@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, BrandProduct, OutletProduct, Promotion
+from .models import BrandFeaturedBanner, Category, BrandProduct, OutletProduct, Promotion
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -107,7 +107,7 @@ class PromotionSerializer(serializers.ModelSerializer):
         model = Promotion
         fields = [
             "id", "brand_product_id", "product_name",
-            "discount_type", "discount_value", "starts_at", "ends_at", "is_active",
+            "discount_type", "discount_value", "starts_at", "ends_at", "is_active", "is_hot_deal",
         ]
         read_only_fields = ["id"]
 
@@ -117,7 +117,10 @@ class PromotionCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Promotion
-        fields = ["brand_product_id", "discount_type", "discount_value", "starts_at", "ends_at", "is_active"]
+        fields = [
+            "brand_product_id", "discount_type", "discount_value",
+            "starts_at", "ends_at", "is_active", "is_hot_deal",
+        ]
 
     def validate_brand_product_id(self, value):
         request = self.context.get("request")
@@ -132,3 +135,43 @@ class PromotionCreateSerializer(serializers.ModelSerializer):
             if attrs["ends_at"] <= attrs["starts_at"]:
                 raise serializers.ValidationError({"ends_at": "ends_at must be after starts_at."})
         return attrs
+
+
+class BrandFeaturedBannerSerializer(serializers.ModelSerializer):
+    brand_name = serializers.CharField(source="brand.name", read_only=True)
+    brand_logo_url = serializers.CharField(source="brand.logo_url", read_only=True)
+    outlet_name = serializers.CharField(source="target_outlet.name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = BrandFeaturedBanner
+        fields = [
+            "id", "brand_id", "brand_name", "brand_logo_url",
+            "title", "subtitle", "image_url",
+            "target_outlet_id", "outlet_name",
+            "is_active", "updated_at",
+        ]
+        read_only_fields = ["id", "brand_id", "updated_at"]
+
+
+class PublicFeaturedBannerSerializer(serializers.ModelSerializer):
+    brand_name = serializers.CharField(source="brand.name", read_only=True)
+    brand_logo_url = serializers.CharField(source="brand.logo_url", read_only=True)
+    outlet_id = serializers.UUIDField(source="target_outlet_id", read_only=True, allow_null=True)
+
+    class Meta:
+        model = BrandFeaturedBanner
+        fields = ["id", "brand_id", "brand_name", "brand_logo_url", "title", "subtitle", "image_url", "outlet_id"]
+
+
+class PublicHotDealSerializer(serializers.Serializer):
+    brand_id = serializers.UUIDField()
+    brand_name = serializers.CharField()
+    brand_logo_url = serializers.CharField()
+    product_name = serializers.CharField()
+    image_url = serializers.CharField(allow_null=True)
+    original_price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    effective_price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    discount_type = serializers.CharField()
+    discount_value = serializers.DecimalField(max_digits=12, decimal_places=2)
+    outlet_id = serializers.UUIDField(allow_null=True)
+    promotion_id = serializers.UUIDField()

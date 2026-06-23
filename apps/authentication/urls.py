@@ -3,6 +3,7 @@ from apps.authentication.views import (
     StaffLoginView,
     CustomerLoginView,
     CustomerRegisterView,
+    DeviceTokenView,
     FeastTokenRefreshView,
     SuperAdminLoginView,
     LogoutView,
@@ -17,4 +18,5 @@ urlpatterns = [
     path("superadmin/login/", SuperAdminLoginView.as_view(), name="superadmin-login"),
     path("logout/", LogoutView.as_view(), name="logout"),
     path("me/", MeView.as_view(), name="me"),
+    path("device-tokens/", DeviceTokenView.as_view(), name="device-tokens"),
 ]

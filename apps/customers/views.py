@@ -269,32 +269,25 @@ class RedeemVoucherView(APIView):
 
 
 class VoucherCatalogView(APIView):
-    """GET /api/v1/customers/voucher-catalog/?brand_id=<uuid> — Public voucher catalog for a brand."""
+    """GET /api/v1/customers/voucher-catalog/ — Public voucher catalog. Optional ?brand_id= filter."""
 
     permission_classes = [AllowAny]
 
     @extend_schema(
         tags=["Customers"],
         summary="Browse voucher catalog",
-        description="List active voucher templates for a brand. No auth required. Used for cart voucher display.",
-        parameters=[OpenApiParameter("brand_id", str, required=True, description="Brand UUID")],
+        description="List active voucher templates. Omit brand_id to get catalog from all brands.",
+        parameters=[OpenApiParameter("brand_id", str, required=False, description="Brand UUID (optional)")],
         responses={200: VoucherTemplateSerializer(many=True), **COMMON_ERROR_RESPONSES},
     )
     def get(self, request):
         brand_id = request.query_params.get("brand_id", "").strip()
-        if not brand_id:
-            return StandardResponse(
-                success=False, code="VALIDATION_ERROR",
-                message="Query param 'brand_id' wajib diisi.",
-                status=400, request=request,
-            )
 
-        qs = (
-            VoucherTemplate.objects
-            .filter(brand_id=brand_id, is_active=True)
-            .prefetch_related("applicable_categories", "applicable_products")
-            .order_by("points_cost")
-        )
+        qs = VoucherTemplate.objects.filter(is_active=True).select_related("brand")
+        if brand_id:
+            qs = qs.filter(brand_id=brand_id)
+
+        qs = qs.prefetch_related("applicable_categories", "applicable_products").order_by("points_cost")
 
         return StandardResponse(
             data=VoucherTemplateSerializer(qs, many=True, context={"request": request}).data,

@@ -51,3 +51,6 @@ Thumbs.db
 .claudeignore
 docs/
 claude.md
+
+google-services.json
+feast-e5f5d-firebase-adminsdk-fbsvc-ec8c43412f.json

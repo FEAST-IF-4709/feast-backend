@@ -1,4 +1,7 @@
+from django.utils import timezone
 from rest_framework import status as http_status
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django.db.models.deletion import ProtectedError
 
@@ -6,14 +9,17 @@ from core.responses.standard import StandardResponse
 from core.schema import COMMON_ERROR_RESPONSES
 from core.viewsets.tenant_scoped import TenantScopedViewSet
 
-from .models import Category, BrandProduct, OutletProduct, Promotion
+from .models import BrandFeaturedBanner, Category, BrandProduct, OutletProduct, Promotion
 from .serializers import (
+    BrandFeaturedBannerSerializer,
     CategorySerializer,
     CategoryCreateSerializer,
     BrandProductSerializer,
     BrandProductCreateSerializer,
     OutletProductSerializer,
     OutletProductCreateSerializer,
+    PublicFeaturedBannerSerializer,
+    PublicHotDealSerializer,
     PromotionSerializer,
     PromotionCreateSerializer,
 )
@@ -318,3 +324,145 @@ class PromotionViewSet(TenantScopedViewSet):
         instance = self.get_object()
         instance.delete()
         return StandardResponse(message="Promotion deleted.", request=request, status=http_status.HTTP_204_NO_CONTENT)
+
+
+class FeaturedBannerView(APIView):
+    """GET/POST/PATCH /api/v1/catalog/featured-banner/ — staff manages their brand's banner."""
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_banner_or_none(self, brand_id):
+        return BrandFeaturedBanner.objects.select_related("brand", "target_outlet").filter(brand_id=brand_id).first()
+
+    @extend_schema(tags=["Catalog"], summary="Get featured banner for this brand")
+    def get(self, request):
+        brand_id = getattr(request, "tenant", {}).get("brand_id")
+        if not brand_id:
+            return StandardResponse(success=False, code="PERMISSION_DENIED", message="No brand context.", status=403, request=request)
+        banner = self._get_banner_or_none(brand_id)
+        if not banner:
+            return StandardResponse(data=None, message="No banner set.", request=request)
+        return StandardResponse(data=BrandFeaturedBannerSerializer(banner).data, request=request)
+
+    @extend_schema(tags=["Catalog"], summary="Create featured banner for this brand", request=BrandFeaturedBannerSerializer)
+    def post(self, request):
+        brand_id = getattr(request, "tenant", {}).get("brand_id")
+        if not brand_id:
+            return StandardResponse(success=False, code="PERMISSION_DENIED", message="No brand context.", status=403, request=request)
+        if BrandFeaturedBanner.objects.filter(brand_id=brand_id).exists():
+            return StandardResponse(success=False, code="ALREADY_EXISTS", message="Banner already exists. Use PATCH to update.", status=400, request=request)
+        serializer = BrandFeaturedBannerSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        banner = serializer.save(brand_id=brand_id)
+        return StandardResponse(data=BrandFeaturedBannerSerializer(banner).data, message="Banner created.", request=request, status=http_status.HTTP_201_CREATED)
+
+    @extend_schema(tags=["Catalog"], summary="Update featured banner for this brand", request=BrandFeaturedBannerSerializer)
+    def patch(self, request):
+        brand_id = getattr(request, "tenant", {}).get("brand_id")
+        if not brand_id:
+            return StandardResponse(success=False, code="PERMISSION_DENIED", message="No brand context.", status=403, request=request)
+        banner = self._get_banner_or_none(brand_id)
+        if not banner:
+            return StandardResponse(success=False, code="NOT_FOUND", message="No banner found.", status=404, request=request)
+        serializer = BrandFeaturedBannerSerializer(banner, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        banner = serializer.save()
+        return StandardResponse(data=BrandFeaturedBannerSerializer(banner).data, message="Banner updated.", request=request)
+
+    @extend_schema(tags=["Catalog"], summary="Delete featured banner for this brand")
+    def delete(self, request):
+        brand_id = getattr(request, "tenant", {}).get("brand_id")
+        if not brand_id:
+            return StandardResponse(success=False, code="PERMISSION_DENIED", message="No brand context.", status=403, request=request)
+        deleted, _ = BrandFeaturedBanner.objects.filter(brand_id=brand_id).delete()
+        if not deleted:
+            return StandardResponse(success=False, code="NOT_FOUND", message="No banner found.", status=404, request=request)
+        return StandardResponse(message="Banner deleted.", request=request, status=http_status.HTTP_204_NO_CONTENT)
+
+
+class PublicFeaturedBannersView(APIView):
+    """GET /api/v1/public/featured-banners/ — Returns all active brand featured banners."""
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(tags=["Public"], summary="List active featured banners (public)", responses={200: PublicFeaturedBannerSerializer(many=True)})
+    def get(self, request):
+        banners = (
+            BrandFeaturedBanner.objects
+            .filter(is_active=True)
+            .select_related("brand", "target_outlet")
+            .order_by("brand__name")
+        )
+        return StandardResponse(data=PublicFeaturedBannerSerializer(banners, many=True).data, request=request)
+
+
+class PublicHotDealsView(APIView):
+    """GET /api/v1/public/hot-deals/ — Returns all active promotions across all brands."""
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(tags=["Public"], summary="List active promotions as hot deals (public)", responses={200: PublicHotDealSerializer(many=True)})
+    def get(self, request):
+        promos = (
+            Promotion.objects
+            .filter(is_active=True)
+            .select_related(
+                "brand_product__brand",
+                "brand_product__category",
+            )
+            .prefetch_related("brand_product__outlet_products__outlet")
+            .order_by("brand_product__brand__name", "brand_product__name")
+        )
+
+        results = []
+        for promo in promos:
+            bp = promo.brand_product
+            brand = bp.brand
+            # Use first active outlet product to get effective price and outlet_id
+            op = bp.outlet_products.filter(outlet__is_active=True).first()
+            effective = op.effective_price if op else bp.base_price
+            image_url = None
+            if bp.image:
+                request_obj = request
+                image_url = request_obj.build_absolute_uri(bp.image.url) if bp.image else None
+
+            results.append({
+                "brand_id": str(brand.id),
+                "brand_name": brand.name,
+                "brand_logo_url": brand.logo_url or "",
+                "product_name": bp.name,
+                "image_url": image_url,
+                "original_price": str(bp.base_price),
+                "effective_price": str(effective),
+                "discount_type": promo.discount_type,
+                "discount_value": str(promo.discount_value) if promo.discount_value is not None else "0",
+                "outlet_id": str(op.outlet_id) if op else None,
+                "promotion_id": str(promo.id),
+            })
+
+        return StandardResponse(data=results, request=request)
+
+
+class BrandPushNotificationView(APIView):
+    """POST /api/v1/catalog/push-notification/ — Send broadcast push to all brand customers."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Catalog"],
+        summary="Send broadcast push notification to brand's customers",
+        request={"application/json": {"type": "object", "properties": {"title": {"type": "string"}, "body": {"type": "string"}}, "required": ["title", "body"]}},
+    )
+    def post(self, request):
+        brand_id = getattr(request, "tenant", {}).get("brand_id")
+        if not brand_id:
+            return StandardResponse(success=False, code="PERMISSION_DENIED", message="No brand context.", status=403, request=request)
+
+        title = (request.data.get("title") or "").strip()
+        body = (request.data.get("body") or "").strip()
+        if not title or not body:
+            return StandardResponse(success=False, code="VALIDATION_ERROR", message="title dan body wajib diisi.", status=400, request=request)
+
+        from apps.orders.push_service import send_brand_broadcast_push
+        sent = send_brand_broadcast_push(brand_id=brand_id, title=title, body=body)
+        return StandardResponse(data={"sent": sent}, message=f"Notifikasi terkirim ke {sent} perangkat.", request=request)

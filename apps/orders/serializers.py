@@ -96,14 +96,16 @@ class CustomerOrderSummarySerializer(serializers.ModelSerializer):
 
 
 class CustomerOrderDetailSerializer(OrderSerializer):
-    """Full detail for GET /api/v1/orders/{pk}/ — includes outlet/brand name."""
+    """Full detail for GET /api/v1/orders/{pk}/ — includes outlet/brand info and receipt fields."""
 
     outlet_name = serializers.CharField(source='outlet.name', read_only=True)
+    outlet_address = serializers.CharField(source='outlet.address', read_only=True)
     brand_name = serializers.CharField(source='outlet.brand.name', read_only=True)
+    brand_logo_url = serializers.CharField(source='outlet.brand.logo_url', read_only=True)
     status_history = OrderStatusHistorySerializer(many=True, read_only=True)
 
     class Meta(OrderSerializer.Meta):
-        fields = ['outlet_name', 'brand_name'] + OrderSerializer.Meta.fields + ['status_history']
+        fields = ['outlet_name', 'outlet_address', 'brand_name', 'brand_logo_url'] + OrderSerializer.Meta.fields + ['status_history']
 
 
 class OrderQRTableCreateSerializer(serializers.Serializer):
