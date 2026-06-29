@@ -14,9 +14,9 @@ _EARTH_RADIUS_KM = 6371.0088
 
 _HAVERSINE_SQL = """
     6371.0088 * acos(LEAST(1.0,
-        cos(radians(%s)) * cos(radians(latitude)) *
-        cos(radians(longitude) - radians(%s)) +
-        sin(radians(%s)) * sin(radians(latitude))
+        cos(radians(%s)) * cos(radians("tenants_outlet"."latitude")) *
+        cos(radians("tenants_outlet"."longitude") - radians(%s)) +
+        sin(radians(%s)) * sin(radians("tenants_outlet"."latitude"))
     ))
 """
 

@@ -9,12 +9,13 @@ from core.responses.standard import StandardResponse
 from core.schema import AUTH_ERROR_RESPONSES, COMMON_ERROR_RESPONSES
 from apps.staff.models import Employee
 from apps.customers.models import Customer
-from apps.authentication.models import BlacklistedJTI
+from apps.authentication.models import BlacklistedJTI, DeviceToken
 from apps.authentication.tokens import create_employee_tokens, create_customer_tokens, create_superadmin_tokens
 from apps.authentication.serializers import (
     StaffLoginSerializer,
     CustomerLoginSerializer,
     CustomerRegisterSerializer,
+    DeviceTokenSerializer,
     LogoutSerializer,
     TokenRefreshSerializer,
     TokenResponseSerializer,
@@ -365,3 +366,38 @@ class LogoutView(APIView):
             request=request,
             status=http_status.HTTP_200_OK,
         )
+
+
+class DeviceTokenView(APIView):
+    """POST /api/v1/auth/device-tokens/ — Upsert FCM push token for logged-in user."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        tags=["Auth"],
+        summary="Register/update FCM device token",
+        request=DeviceTokenSerializer,
+        responses={200: None},
+    )
+    def post(self, request):
+        serializer = DeviceTokenSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        token = serializer.validated_data["token"]
+        platform = serializer.validated_data["platform"]
+
+        DeviceToken.objects.update_or_create(
+            token=token,
+            defaults={"user_id": str(request.user.pk), "platform": platform},
+        )
+        return StandardResponse(message="Device token registered.", request=request)
+
+    @extend_schema(
+        tags=["Auth"],
+        summary="Remove FCM device token on logout",
+        responses={200: None},
+    )
+    def delete(self, request):
+        token = request.data.get("token", "").strip()
+        if token:
+            DeviceToken.objects.filter(token=token, user_id=str(request.user.pk)).delete()
+        return StandardResponse(message="Device token removed.", request=request)

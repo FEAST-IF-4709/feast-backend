@@ -39,6 +39,7 @@ class PublicTableResolveSerializer(serializers.Serializer):
         return {
             "id": str(outlet.id),
             "name": outlet.name,
+            "brand_id": str(outlet.brand_id),
             "brand_name": outlet.brand.name,
         }
 

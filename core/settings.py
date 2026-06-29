@@ -25,7 +25,12 @@ SECRET_KEY = 'django-insecure-_wvnuj#zczert03lu@3f$=ptjq-i!u2=_1qj#6xucwbk29-lp$
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    "192.168.18.17",
+    "localhost",
+    "127.0.0.1",
+    "antecedently-asphaltic-izayah.ngrok-free.dev",
+]
 
 
 # Application definition
@@ -142,5 +147,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173", # Jika pakai Vite
+    "http://localhost:5173",
+    "http://192.168.18.17:5173",
+    "https://antecedently-asphaltic-izayah.ngrok-free.dev",
 ]

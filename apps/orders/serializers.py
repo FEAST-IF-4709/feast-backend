@@ -40,7 +40,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "id", "order_number", "brand_id", "outlet_id", "customer_id", "table_id",
             "cashier_employee_id", "order_source", "walk_in_name", "payment_method",
             "payment_status", "fulfillment_status", "subtotal", "discount_total",
-            "grand_total", "placed_at", "notes", "items",
+            "tax_amount", "grand_total", "placed_at", "notes", "items",
         ]
 
 
@@ -74,6 +74,38 @@ class OrderListSerializer(serializers.ModelSerializer):
 
     def get_table_label(self, obj):
         return obj.table.label if obj.table else None
+
+
+class CustomerOrderSummarySerializer(serializers.ModelSerializer):
+    """Flat summary for GET /api/v1/me/orders/ — includes outlet/brand name and item count."""
+
+    outlet_name = serializers.CharField(source='outlet.name', read_only=True)
+    brand_name = serializers.CharField(source='outlet.brand.name', read_only=True)
+    item_count = serializers.SerializerMethodField()
+    grand_total = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+    class Meta:
+        model = Order
+        fields = [
+            'id', 'order_number', 'outlet_name', 'brand_name', 'item_count',
+            'grand_total', 'fulfillment_status', 'placed_at',
+        ]
+
+    def get_item_count(self, obj):
+        return obj.items.count()
+
+
+class CustomerOrderDetailSerializer(OrderSerializer):
+    """Full detail for GET /api/v1/orders/{pk}/ — includes outlet/brand info and receipt fields."""
+
+    outlet_name = serializers.CharField(source='outlet.name', read_only=True)
+    outlet_address = serializers.CharField(source='outlet.address', read_only=True)
+    brand_name = serializers.CharField(source='outlet.brand.name', read_only=True)
+    brand_logo_url = serializers.CharField(source='outlet.brand.logo_url', read_only=True)
+    status_history = OrderStatusHistorySerializer(many=True, read_only=True)
+
+    class Meta(OrderSerializer.Meta):
+        fields = ['outlet_name', 'outlet_address', 'brand_name', 'brand_logo_url'] + OrderSerializer.Meta.fields + ['status_history']
 
 
 class OrderQRTableCreateSerializer(serializers.Serializer):
@@ -199,12 +231,17 @@ class OrderCashierPOSCreateSerializer(serializers.Serializer):
         return attrs
 
 
-def compute_order_totals(items_data, product_map):
-    """Compute subtotal, discount_total, grand_total and build OrderItem list."""
+def compute_order_totals(items_data, product_map, tax_rate=0):
+    """Compute subtotal, discount_total, tax_amount, grand_total and build OrderItem list.
+
+    tax_rate: percentage value (e.g. 11 for 11%). Applied on net amount after discount.
+    """
+    from decimal import Decimal, ROUND_HALF_UP
+
     now = timezone.now()
     order_items_payload = []
-    subtotal = 0
-    discount_total = 0
+    subtotal = Decimal("0")
+    discount_total = Decimal("0")
 
     for item_data in items_data:
         pid = str(item_data["outlet_product_id"])
@@ -222,12 +259,12 @@ def compute_order_totals(items_data, product_map):
             .first()
         )
 
-        discount_per_unit = 0
+        discount_per_unit = Decimal("0")
         if active_promotion:
             if active_promotion.discount_type == Promotion.DiscountType.PERCENT:
                 discount_per_unit = base_unit_price * active_promotion.discount_value / 100
             else:
-                discount_per_unit = active_promotion.discount_value
+                discount_per_unit = Decimal(str(active_promotion.discount_value))
             discount_per_unit = min(discount_per_unit, base_unit_price)
 
         unit_price = base_unit_price - discount_per_unit
@@ -257,5 +294,9 @@ def compute_order_totals(items_data, product_map):
             "item_notes": item_data.get("item_notes", ""),
         })
 
-    grand_total = sum(item["line_total"] for item in order_items_payload)
-    return order_items_payload, subtotal, discount_total, grand_total
+    net_amount = subtotal - discount_total
+    tax_amount = (net_amount * Decimal(str(tax_rate)) / 100).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    grand_total = net_amount + tax_amount
+    return order_items_payload, subtotal, discount_total, tax_amount, grand_total

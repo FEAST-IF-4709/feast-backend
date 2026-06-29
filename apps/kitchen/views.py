@@ -166,9 +166,10 @@ class KitchenOrderStatusUpdateView(APIView):
 
             _outlet_id = str(order_locked.outlet_id)
             _order_id = str(order_locked.id)
-            _to_status = to_status
+            # Ambil status akhir dari model — bisa berbeda dari to_status jika ada auto-advance
+            _final_status = order_locked.fulfillment_status
             transaction.on_commit(
-                lambda: _broadcast_status_change(_outlet_id, _order_id, _to_status)
+                lambda: _broadcast_status_change(_outlet_id, _order_id, _final_status)
             )
 
         return StandardResponse(
@@ -253,18 +254,33 @@ def _broadcast_status_change(outlet_id, order_id_str, to_status):
     broadcast_to_kitchen(outlet_id, "order.status_changed", thin)
     broadcast_to_dashboard(outlet_id, "order.status_changed", thin)
     broadcast_to_order(order_id_str, "fulfillment.status_changed", {"fulfillment_status": to_status})
+    _send_push_for_order(order_id_str, to_status)
 
 
 def _broadcast_cancel(outlet_id, order_id_str):
     from apps.realtime.broadcast import broadcast_to_kitchen, broadcast_to_order, broadcast_to_dashboard
-    thin = {"order_id": order_id_str, "fulfillment_status": Order.FulfillmentStatus.CANCELLED}
+    cancelled = Order.FulfillmentStatus.CANCELLED
+    thin = {"order_id": order_id_str, "fulfillment_status": cancelled}
     broadcast_to_kitchen(outlet_id, "order.cancelled", thin)
     broadcast_to_dashboard(outlet_id, "order.cancelled", thin)
-    broadcast_to_order(
-        order_id_str,
-        "fulfillment.status_changed",
-        {"fulfillment_status": Order.FulfillmentStatus.CANCELLED},
-    )
+    broadcast_to_order(order_id_str, "fulfillment.status_changed", {"fulfillment_status": cancelled})
+    _send_push_for_order(order_id_str, cancelled)
+
+
+def _send_push_for_order(order_id_str, status):
+    try:
+        order = Order.objects.select_related("customer").get(pk=order_id_str)
+        if order.customer_id is None:
+            return
+        from apps.orders.push_service import send_order_status_push
+        send_order_status_push(
+            order_id=order_id_str,
+            order_number=order.order_number,
+            customer_user_id=order.customer_id,
+            new_status=status,
+        )
+    except Exception:
+        pass
 
 
 class KitchenOutletListView(APIView):

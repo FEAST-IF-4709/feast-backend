@@ -147,10 +147,13 @@ class InitiateQRISView(APIView):
             "expires_at": pt.expires_at,
             "amount": str(pt.gross_amount),
             "polling_endpoint": f"/api/v1/payments/{order.id}/status/",
-            "websocket_topic": f"order.{order.id}",
+            # Connect ke: ws://<host>/ws/order/{order_id}/?token=<access_token>
+            # Event yang diterima: payment.status_changed, fulfillment.status_changed
+            "websocket_path": f"/ws/order/{order.id}/",
         }
         if not getattr(django_settings, "MIDTRANS_IS_PRODUCTION", True):
             data["qr_string_url"] = f"/api/v1/payments/{order.id}/qr-string/"
+            data["sandbox_simulate_endpoint"] = "/api/v1/payments/sandbox/simulate-payment/"
         return data
 
 
@@ -284,10 +287,17 @@ class MidtransWebhookView(APIView):
                     )
 
                     if transaction_status == "settlement":
+                        from apps.customers.loyalty import award_points_for_order
+                        award_points_for_order(order)
                         _outlet_id = str(order.outlet_id)
                         _order_id = str(order.id)
                         transaction.on_commit(
                             lambda: _broadcast_settled(_outlet_id, _order_id)
+                        )
+                    elif transaction_status == "expire":
+                        _order_id = str(order.id)
+                        transaction.on_commit(
+                            lambda: _broadcast_expired(_order_id)
                         )
 
         except Order.DoesNotExist:
@@ -296,12 +306,31 @@ class MidtransWebhookView(APIView):
         return StandardResponse(message="Webhook processed.", request=request)
 
 
+def _broadcast_expired(order_id_str):
+    from apps.realtime.broadcast import broadcast_to_order
+    broadcast_to_order(order_id_str, "payment.status_changed", {
+        "order_id": order_id_str,
+        "payment_status": Order.PaymentStatus.EXPIRED,
+        "fulfillment_status": None,
+    })
+
+
 def _broadcast_settled(outlet_id, order_id_str):
     from apps.realtime.broadcast import broadcast_to_kitchen, broadcast_to_order, broadcast_to_dashboard
+    try:
+        order = Order.objects.get(pk=order_id_str)
+        fulfillment_status = order.fulfillment_status
+    except Order.DoesNotExist:
+        fulfillment_status = None
+
     thin = {"order_id": order_id_str, "outlet_id": outlet_id}
     broadcast_to_kitchen(outlet_id, "order.created", thin)
     broadcast_to_dashboard(outlet_id, "order.created", thin)
-    broadcast_to_order(order_id_str, "payment.status_changed", {"payment_status": "SETTLED"})
+    broadcast_to_order(order_id_str, "payment.status_changed", {
+        "order_id": order_id_str,
+        "payment_status": Order.PaymentStatus.SETTLED,
+        "fulfillment_status": fulfillment_status,
+    })
 
 
 class ManualSettleView(APIView):
@@ -357,6 +386,9 @@ class ManualSettleView(APIView):
             )
             order_locked.payment_status = Order.PaymentStatus.SETTLED
             order_locked.save(update_fields=["payment_status"])
+
+            from apps.customers.loyalty import award_points_for_order
+            award_points_for_order(order_locked)
 
             _outlet_id = str(order_locked.outlet_id)
             _order_id = str(order_locked.id)
@@ -559,6 +591,9 @@ class SandboxSimulatePaymentView(APIView):
             order_locked = Order.objects.select_for_update().get(pk=order.pk)
             order_locked.payment_status = Order.PaymentStatus.SETTLED
             order_locked.save(update_fields=["payment_status"])
+
+            from apps.customers.loyalty import award_points_for_order
+            award_points_for_order(order_locked)
 
             PaymentTransaction.objects.filter(order=order_locked).update(
                 transaction_status="settlement",

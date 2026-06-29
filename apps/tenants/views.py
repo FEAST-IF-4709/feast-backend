@@ -2,7 +2,8 @@ from django.shortcuts import get_object_or_404
 from django.db import transaction
 from rest_framework import viewsets, status as http_status
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.views import APIView
 from rest_framework import serializers as drf_serializers
 
 from core.permissions.has_permission import HasPermission
@@ -11,7 +12,7 @@ from core.viewsets.tenant_scoped import TenantScopedViewSet
 from core.schema import COMMON_ERROR_RESPONSES
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from .models import Brand, Outlet
-from .serializers import BrandSerializer, BrandAdminSerializer, OutletSerializer, OutletCreateSerializer
+from .serializers import BrandSerializer, BrandAdminSerializer, OutletSerializer, OutletCreateSerializer, PublicBrandSerializer, PublicOutletSerializer
 
 
 class BrandAdminViewSet(viewsets.ViewSet):
@@ -312,3 +313,57 @@ class OutletViewSet(TenantScopedViewSet):
         instance = self.get_object()
         instance.delete()
         return StandardResponse(message="Outlet deleted.", request=request, status=http_status.HTTP_204_NO_CONTENT)
+
+
+class PublicBrandListView(APIView):
+    """GET /api/v1/public/brands/ — List all active brands. No auth required."""
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        tags=["Public"],
+        summary="List all active brands",
+        description="Returns all active brands with public-facing info. No authentication required.",
+        responses={200: PublicBrandSerializer(many=True)},
+    )
+    def get(self, request):
+        brands = Brand.objects.filter(is_active=True).order_by("name")
+        return StandardResponse(
+            data=PublicBrandSerializer(brands, many=True).data,
+            request=request,
+        )
+
+
+class PublicOutletListView(APIView):
+    """GET /api/v1/public/outlets/?brand_id=<uuid> — List active outlets for a brand. No auth required."""
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        tags=["Public"],
+        summary="List outlets by brand (no location required)",
+        description="Returns all active outlets for a brand ordered by name. Use /api/v1/outlets/nearby/ instead if customer location is available.",
+        parameters=[
+            {"name": "brand_id", "in": "query", "required": True, "schema": {"type": "string", "format": "uuid"}},
+        ],
+        responses={200: PublicOutletSerializer(many=True)},
+    )
+    def get(self, request):
+        brand_id = request.query_params.get("brand_id", "").strip()
+        if not brand_id:
+            return StandardResponse(
+                success=False, code="VALIDATION_ERROR",
+                message="Query param 'brand_id' wajib diisi.",
+                status=400, request=request,
+            )
+
+        outlets = (
+            Outlet.objects
+            .filter(brand_id=brand_id, is_active=True)
+            .order_by("name")
+        )
+
+        return StandardResponse(
+            data=PublicOutletSerializer(outlets, many=True).data,
+            request=request,
+        )

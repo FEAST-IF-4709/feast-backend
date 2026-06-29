@@ -1,6 +1,16 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 
+from apps.authentication.models import DeviceToken
+
+
+class DeviceTokenSerializer(serializers.Serializer):
+    token = serializers.CharField(max_length=500)
+    platform = serializers.ChoiceField(
+        choices=DeviceToken.Platform.choices,
+        default=DeviceToken.Platform.ANDROID,
+    )
+
 
 class StaffLoginSerializer(serializers.Serializer):
     email = serializers.EmailField()

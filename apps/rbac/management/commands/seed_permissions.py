@@ -61,6 +61,8 @@ PERMISSION_CATALOG = [
     ("kitchen", "kitchen.order.force_cancel", "Kitchen: force cancel order"),
     # Dashboard
     ("dashboard", "dashboard.view", "View dashboard"),
+    # Loyalty
+    ("loyalty", "loyalty.voucher.manage", "Manage voucher templates (create/update/delete)"),
 ]
 
 # Hierarchy rank per system role. Lower number = higher authority.

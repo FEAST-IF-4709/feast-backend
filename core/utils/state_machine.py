@@ -5,7 +5,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 FULFILLMENT_TRANSITIONS: dict[str, list[str]] = {
     "RECEIVED": ["IN_PROGRESS", "CANCELLED"],
     "IN_PROGRESS": ["READY", "CANCELLED"],
-    "READY": ["SERVED"],
+    "READY": ["SERVED", "COMPLETED"],   # shortcut: skip SERVED untuk order delivery/takeaway
     "SERVED": ["COMPLETED"],
     "COMPLETED": [],
     "CANCELLED": [],
