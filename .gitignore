@@ -27,7 +27,7 @@ db.sqlite3
 db.sqlite3-journal
 
 # Folder untuk file upload user (jangan masuk ke repo)
-media/
+# media/
 # Folder static hasil collectstatic (biasanya di-generate di server)
 staticfiles/
 static_root/
